@@ -119,6 +119,7 @@ python "12. Melody generation with Markov chains/Code/markovchain.py" [options]
 - `--song-style {lead,chorale}` (default: `lead`)
   - `lead`: original melody + block chords layout.
   - `chorale`: SATB 4-voice harmony conditioned on generated chord progression.
+  - `chorale` samples separate soprano and accompaniment bar-level rhythm templates from melody data instead of fixed quarter notes.
 
 - `--chorale-beam-width <int>` (default: `20`)
   - Beam width for SATB search in `chorale` mode.

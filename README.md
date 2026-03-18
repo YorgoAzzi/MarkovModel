@@ -82,6 +82,8 @@ Generate SATB chorale (4 voices conditioned on chord progression):
 python "Code/markovchain.py" --task song --song-style chorale --song-bars 8 --beats-per-bar 4
 ```
 
+Chorale mode now learns separate soprano and accompaniment bar-level rhythm templates from melody data, giving soprano more motion while keeping the inner voices simpler.
+
 Higher-quality chorale search (slower):
 ```bash
 python "Code/markovchain.py" --task song --song-style chorale --song-bars 8 --beats-per-bar 4 --chorale-beam-width 24 --chorale-candidates-per-voice 7 --chorale-top-sonorities 30
