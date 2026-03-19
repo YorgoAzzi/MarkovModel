@@ -1,13 +1,9 @@
 # Markov Symbolic Music Generator
 
-This repository generates symbolic music from MIDI/MusicXML using second-order Markov models.
+This repository generates symbolic music from MIDI/MusicXML using Markov models. The two main workflows are:
 
-Supported tasks:
-- `melody`: melody only
-- `chord`: chord progression only
-- `song`: melody + chords together
-- `realtime`: interactive bar-by-bar chorale generation
-- `harmonize`: harmonize an input melody into SATB
+- generate a new SATB chorale
+- harmonize an input melody into SATB
 
 Main script:
 - `Code/markovchain.py`
@@ -32,14 +28,87 @@ python -m music21.configure
 
 ## Data
 
-Place training files here:
-- Melody data: `data/`
-- Chord data: `dataChords/`
+Training folders:
+- Melody/rhythm/HMM emission corpus: `data/` or `dataMelody/`
+- Chord/progression corpus: `dataChords/`
 
 Supported formats:
 - `.mid`, `.midi`, `.xml`, `.musicxml`, `.mxl`
 
-## Quick Start
+## Main Workflows
+
+### 1. Generate A Chorale
+
+This is the main generation mode. It creates a four-part SATB chorale using:
+- chord progression generation
+- chorale beam search
+- learned rhythm templates
+- cadence constraints
+
+Default run:
+```bash
+python "Code/markovchain.py"
+```
+
+Equivalent explicit command:
+```bash
+python "Code/markovchain.py" --task song --song-style chorale --song-bars 16 --beats-per-bar 4 --key C --mode major
+```
+
+Higher-quality search:
+```bash
+python "Code/markovchain.py" --task song --song-style chorale --song-bars 16 --beats-per-bar 4 --chorale-beam-width 24 --chorale-candidates-per-voice 7 --chorale-top-sonorities 30
+```
+
+Example with different key and stronger cadence/repeat-note control:
+```bash
+python "Code/markovchain.py" --task song --song-style chorale --song-bars 16 --beats-per-bar 4 --key A --mode major --chorale-repeat-note-penalty 6 --cadence-every-bars 4
+```
+
+Notes:
+- progression blocks are learned from `dataChords`
+- chorale rhythm is learned from the melody corpus
+- output is written as `generated_song_*.musicxml`
+
+### 2. Harmonize An Input Melody
+
+This mode takes an existing melody and generates SATB harmony around it.
+
+Run with a direct file path:
+```bash
+python "Code/markovchain.py" --task harmonize --melody-input "path/to/melody.musicxml" --key C --mode major
+```
+
+Or place the file in `melodyInput/` and pass only the filename:
+```bash
+python "Code/markovchain.py" --task harmonize --melody-input "my_melody.musicxml"
+```
+
+If you omit `--melody-input`, the script picks the first supported file found in `melodyInput/`.
+
+Important:
+- if the melody is not actually in the selected key/mode, harmonization can fail
+- for chromatic melodies, either use the correct `--key` / `--mode` or pass `--disable-scale-snap`
+- multi-track MIDI input is resolved by choosing the highest-average-pitch note track as the melody line
+
+Output:
+- harmonized SATB score as `generated_song_*.musicxml`
+
+## Common Options For Chorale And Harmonize
+
+- `--key`, `--mode`: harmonic scale / key
+- `--disable-scale-snap`: allow notes/chords outside the selected scale
+- `--beats-per-bar`: event grid density
+- `--cadence-every-bars`: cadence frequency
+- `--chorale-beam-width`: beam width for SATB search
+- `--chorale-candidates-per-voice`: per-voice candidate pool size
+- `--chorale-top-sonorities`: local SATB expansion size
+- `--chorale-repeat-note-penalty`: penalize repeated notes in a voice
+- `--disable-progression-blocks`: fall back to raw chord-chain generation
+
+## Other Modes
+
+These are available, but secondary to the chorale and harmonize workflows.
 
 ### Melody
 
@@ -48,7 +117,7 @@ Train:
 python "Code/markovchain.py" --task melody --retrain
 ```
 
-Generate from saved model:
+Generate:
 ```bash
 python "Code/markovchain.py" --task melody
 ```
@@ -65,88 +134,13 @@ Generate:
 python "Code/markovchain.py" --task chord --length 16
 ```
 
-### Song (Melody + Chords)
-
-Train both models and generate:
-```bash
-python "Code/markovchain.py" --task song --retrain --refresh-cache
-```
-
-Generate from saved models:
-```bash
-python "Code/markovchain.py" --task song --song-bars 8 --beats-per-bar 4
-```
-
-Generate SATB chorale (4 voices conditioned on chord progression):
-```bash
-python "Code/markovchain.py" --task song --song-style chorale --song-bars 8 --beats-per-bar 4
-```
-
-Chorale mode now learns separate soprano and accompaniment bar-level rhythm templates from melody data, giving soprano more motion while keeping the inner voices simpler.
-
-Higher-quality chorale search (slower):
-```bash
-python "Code/markovchain.py" --task song --song-style chorale --song-bars 8 --beats-per-bar 4 --chorale-beam-width 24 --chorale-candidates-per-voice 7 --chorale-top-sonorities 30
-```
-
-Chorale with stronger repeat-note penalty + cadence forcing:
-```bash
-python "Code/markovchain.py" --task song --song-style chorale --song-bars 8 --beats-per-bar 4 --key A --mode major --chorale-repeat-note-penalty 6 --cadence-every-bars 4
-```
-
-Disable progression-block transitions and fall back to raw chord-chain generation:
-```bash
-python "Code/markovchain.py" --task song --song-style chorale --disable-progression-blocks
-```
-
-Progression blocks are now learned from `dataChords` (split into major/minor sets).
-If a requested mode has no extracted blocks, song generation falls back to raw chord-chain generation.
-
-### Realtime (Interactive)
+### Realtime
 
 ```bash
 python "Code/markovchain.py" --task realtime --realtime-bars 16
 ```
 
 Realtime mode writes `generated_realtime_live.musicxml` after each bar.
-Use `--realtime-open-each-bar` if your MuseScore setup does not auto-refresh file changes.
-
-Live commands at each prompt:
-- `key <C/G/F#...>`
-- `mode <major/minor>`
-- `density <1-8>`
-- `cadence <N>`
-- `tension <0..1>`
-- `show`, `stop`
-
-### Harmonize Input Melody
-
-```bash
-python "Code/markovchain.py" --task harmonize --melody-input "path/to/melody.musicxml" --key C --mode major
-```
-
-You can also place files in `melodyInput/` and pass just the filename:
-```bash
-python "Code/markovchain.py" --task harmonize --melody-input "my_melody.musicxml"
-```
-
-## Common Controls
-
-- `--pitch-min`, `--pitch-max`: melody range
-- `--max-jump`: max melodic leap
-- `--key`, `--mode`: scale snapping
-- `--duration-values`: duration quantization grid
-- `--chord-repeat-penalty`: penalize repeated chords
-- `--laplace-alpha`: smoothing strength
-
-## Output
-
-Generated MusicXML files:
-- `generated_melody_*.musicxml`
-- `generated_chords_*.musicxml`
-- `generated_song_*.musicxml`
-
-Open in MuseScore or any MusicXML-compatible editor.
 
 ## Notes
 
