@@ -80,7 +80,17 @@ HARMONIC_FUNCTION_MATCH_BONUS = 3.5
 HARMONIC_OBSERVATION_POSITIONS = (0, 1)
 HARMONIC_ROMAN_STATES_MAJOR = ("I", "ii", "iii", "IV", "V", "vi", "vii°")
 HARMONIC_ROMAN_STATES_MINOR = ("i", "ii°", "III", "iv", "v", "VI", "VII")
+RULE_OF_OCTAVE_BASS_BONUS = 0.9
+RULE_OF_OCTAVE_ROMAN_MAJOR = {
+    "ascending": {1: ("I",), 2: ("V", "ii"), 3: ("I", "vi"), 4: ("IV", "ii"), 5: ("V",), 6: ("IV", "ii", "vi"), 7: ("V", "vii°")},
+    "descending": {1: ("I",), 2: ("V", "ii"), 3: ("I", "vi"), 4: ("IV", "ii"), 5: ("V",), 6: ("IV", "ii", "vi"), 7: ("V", "vii°")},
+}
+RULE_OF_OCTAVE_ROMAN_MINOR = {
+    "ascending": {1: ("i",), 2: ("V", "ii°"), 3: ("III", "i"), 4: ("iv",), 5: ("V",), 6: ("VI", "iv"), 7: ("V", "VII")},
+    "descending": {1: ("i",), 2: ("ii°", "V"), 3: ("III", "i"), 4: ("iv",), 5: ("V",), 6: ("VI", "iv"), 7: ("VII", "V")},
+}
 
+HARMONIZE_STRONG_BEAT_MISMATCH_PENALTY = 8.0
 
 class SecondOrderMarkov:
     """Generic second-order Markov model with Laplace smoothing."""
@@ -698,9 +708,8 @@ def _quantize_rhythm_value(value, step=RHYTHM_MIN_UNIT):
     return round(float(value) / float(step)) * float(step)
 
 
-def _extract_bar_rhythm_templates_from_score(score):
-    parts = score.parts
-    source = parts[0] if len(parts) > 0 else score.flat
+def _extract_bar_rhythm_templates_from_stream(source):
+    source = source.flatten()
 
     by_bar = {}
     for el in source.recurse().notes:
@@ -739,6 +748,12 @@ def _extract_bar_rhythm_templates_from_score(score):
         templates.append(tuple(durations))
 
     return templates
+
+
+def _extract_bar_rhythm_templates_from_score(score):
+    parts = score.parts
+    source = parts[0] if len(parts) > 0 else score.flat
+    return _extract_bar_rhythm_templates_from_stream(source)
 
 
 def _extract_harmonic_emission_sequence_from_score(score, mode):
@@ -832,6 +847,96 @@ def _extract_harmonic_emission_sequence_from_score(score, mode):
     return {"functions": functions, "observations": observations}
 
 
+def _extract_direct_chord_emission_sequence_from_score(score, mode):
+    normalized_score = _transpose_score_to_reference_key(score)
+    parts = normalized_score.parts
+    soprano_source = parts[0].flatten() if len(parts) > 0 else normalized_score.flatten()
+    chord_source = normalized_score.chordify().flatten()
+    key_root_pc = 9 if str(mode).lower() == "minor" else 0
+
+    soprano_notes = []
+    max_end = 0.0
+    for el in soprano_source.notes:
+        if not isinstance(el, note.Note):
+            continue
+        start = float(el.offset)
+        end = start + float(el.duration.quarterLength)
+        soprano_notes.append((start, end, int(el.pitch.midi)))
+        if end > max_end:
+            max_end = end
+
+    chord_events = []
+    for el in chord_source.notes:
+        if not isinstance(el, m21chord.Chord):
+            continue
+        chord_event = _extract_chord_event(el)
+        if chord_event is None:
+            continue
+        start = float(el.offset)
+        end = start + float(el.duration.quarterLength)
+        chord_events.append((start, end, chord_event))
+        if end > max_end:
+            max_end = end
+
+    if not soprano_notes or not chord_events:
+        return None
+
+    total_bars = max(1, int(np.ceil(max_end / CHORD_BAR_LENGTH)))
+    chords = []
+    observations = []
+
+    def active_soprano_pitch(offset):
+        for start, end, midi_value in soprano_notes:
+            if start <= offset < end:
+                return int(midi_value)
+        return None
+
+    def active_bar_chord(bar_start, bar_end):
+        for start, end, chord_token in chord_events:
+            if start <= bar_start < end:
+                return chord_token
+        for start, _, chord_token in chord_events:
+            if bar_start <= start < bar_end:
+                return chord_token
+        midpoint = bar_start + (CHORD_BAR_LENGTH / 2.0)
+        for start, end, chord_token in chord_events:
+            if start <= midpoint < end:
+                return chord_token
+        return None
+
+    for bar_idx in range(total_bars):
+        bar_start = bar_idx * CHORD_BAR_LENGTH
+        bar_end = bar_start + CHORD_BAR_LENGTH
+        chord_token = active_bar_chord(bar_start, bar_end)
+        if chord_token is None:
+            continue
+
+        root_pc, quality, _ = chord_token
+        normalized_root = (int(root_pc) - int(key_root_pc)) % 12
+        chord_key = (int(normalized_root), str(quality))
+
+        observed_pcs = []
+        for pos_idx, rel_offset in enumerate((0.0, CHORD_BAR_LENGTH / 2.0)):
+            midi_value = active_soprano_pitch(bar_start + rel_offset)
+            if midi_value is not None:
+                observed_pcs.append((int(pos_idx), (int(midi_value) - int(key_root_pc)) % 12))
+        if not observed_pcs:
+            for start, _, midi_value in soprano_notes:
+                if bar_start <= start < bar_end:
+                    rel_pos = 0 if (start - bar_start) < (CHORD_BAR_LENGTH / 2.0) else 1
+                    observed_pcs.append((int(rel_pos), (int(midi_value) - int(key_root_pc)) % 12))
+                    break
+        if not observed_pcs:
+            continue
+
+        chords.append(chord_key)
+        observations.append(observed_pcs)
+
+    if not chords:
+        return None
+    return {"chords": chords, "observations": observations}
+
+
 def _simplify_accompaniment_template(template):
     simplified = []
     running = 0.0
@@ -858,7 +963,7 @@ def load_rhythm_templates_from_folder(folder, cache_path, refresh_cache=False):
         if folder_path.name == "data" and fallback_folder.exists():
             folder_path = fallback_folder
         else:
-            return {"soprano": [], "accompaniment": []}
+            return {voice: [] for voice in VOICE_ORDER}
 
     all_files = sorted(
         p for p in folder_path.rglob("*") if p.suffix.lower() in SUPPORTED_EXTENSIONS
@@ -871,7 +976,7 @@ def load_rhythm_templates_from_folder(folder, cache_path, refresh_cache=False):
         if key not in active_keys:
             del cached_files[key]
 
-    templates = {"soprano": [], "accompaniment": []}
+    templates = {voice: [] for voice in VOICE_ORDER}
     reused = 0
 
     for path in all_files:
@@ -883,12 +988,12 @@ def load_rhythm_templates_from_folder(folder, cache_path, refresh_cache=False):
             not refresh_cache
             and cached_entry is not None
             and cached_entry.get("mtime_ns") == mtime_ns
-            and cached_entry.get("schema") == "rhythm_templates_v2"
+            and cached_entry.get("schema") == "rhythm_templates_v3"
         ):
-            templates["soprano"].extend([tuple(t) for t in cached_entry.get("soprano_templates", [])])
-            templates["accompaniment"].extend(
-                [tuple(t) for t in cached_entry.get("accompaniment_templates", [])]
-            )
+            for voice in VOICE_ORDER:
+                templates[voice].extend(
+                    [tuple(t) for t in cached_entry.get(f"{voice}_templates", [])]
+                )
             reused += 1
             continue
 
@@ -898,16 +1003,38 @@ def load_rhythm_templates_from_folder(folder, cache_path, refresh_cache=False):
             print(f"Skipping rhythm parse {path}: {exc}")
             continue
 
-        file_templates = _extract_bar_rhythm_templates_from_score(score)
-        accompaniment_templates = [_simplify_accompaniment_template(t) for t in file_templates]
+        parts = [part for part in score.parts if len(part.flatten().notes) > 0]
+        if len(parts) >= 4:
+            voice_sources = {
+                "soprano": parts[0],
+                "alto": parts[1],
+                "tenor": parts[2],
+                "bass": parts[3],
+            }
+        else:
+            file_templates = _extract_bar_rhythm_templates_from_score(score)
+            voice_sources = {
+                "soprano": score.parts[0] if len(score.parts) > 0 else score.flat,
+                "alto": score.parts[0] if len(score.parts) > 0 else score.flat,
+                "tenor": score.parts[0] if len(score.parts) > 0 else score.flat,
+                "bass": score.parts[0] if len(score.parts) > 0 else score.flat,
+            }
+        file_voice_templates = {}
+        for voice in VOICE_ORDER:
+            extracted = _extract_bar_rhythm_templates_from_stream(voice_sources[voice])
+            if voice != "soprano":
+                extracted = [_simplify_accompaniment_template(t) for t in extracted]
+            file_voice_templates[voice] = extracted
         cached_files[key] = {
-            "schema": "rhythm_templates_v2",
+            "schema": "rhythm_templates_v3",
             "mtime_ns": mtime_ns,
-            "soprano_templates": [list(t) for t in file_templates],
-            "accompaniment_templates": [list(t) for t in accompaniment_templates],
+            **{
+                f"{voice}_templates": [list(t) for t in file_voice_templates[voice]]
+                for voice in VOICE_ORDER
+            },
         }
-        templates["soprano"].extend(file_templates)
-        templates["accompaniment"].extend(accompaniment_templates)
+        for voice in VOICE_ORDER:
+            templates[voice].extend(file_voice_templates[voice])
 
     _save_cache(cache_path, cache)
 
@@ -916,7 +1043,9 @@ def load_rhythm_templates_from_folder(folder, cache_path, refresh_cache=False):
             f"Rhythm template scan complete: {len(all_files)} files, "
             f"{reused} loaded from cache, "
             f"{len(templates['soprano'])} soprano templates, "
-            f"{len(templates['accompaniment'])} accompaniment templates."
+            f"{len(templates['alto'])} alto templates, "
+            f"{len(templates['tenor'])} tenor templates, "
+            f"{len(templates['bass'])} bass templates."
         )
 
     return templates
@@ -992,6 +1121,115 @@ def load_harmonic_emission_sequences_from_folder(folder, cache_path, refresh_cac
         )
 
     return sequences
+
+
+def load_direct_chord_emission_sequences_from_folder(folder, cache_path, refresh_cache=False):
+    folder_path = Path(folder)
+    if not folder_path.exists():
+        fallback_folder = Path("dataMelody")
+        if folder_path.name == "data" and fallback_folder.exists():
+            folder_path = fallback_folder
+        else:
+            return {"major": [], "minor": []}
+
+    all_files = sorted(
+        p for p in folder_path.rglob("*") if p.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+
+    cache = _load_cache(cache_path)
+    cached_files = cache["files"]
+    active_keys = {str(p.resolve()) for p in all_files}
+    for key in list(cached_files.keys()):
+        if key not in active_keys:
+            del cached_files[key]
+
+    sequences = {"major": [], "minor": []}
+    reused = 0
+
+    for path in all_files:
+        key = str(path.resolve())
+        mtime_ns = path.stat().st_mtime_ns
+        cached_entry = cached_files.get(key)
+
+        if (
+            not refresh_cache
+            and cached_entry is not None
+            and cached_entry.get("schema") == "direct_chord_emissions_v1"
+            and cached_entry.get("mtime_ns") == mtime_ns
+        ):
+            mode = cached_entry.get("mode")
+            sequence = cached_entry.get("sequence")
+            if mode in sequences and sequence:
+                sequences[mode].append(sequence)
+                reused += 1
+                continue
+
+        try:
+            score = converter.parse(str(path))
+            analyzed_key = score.analyze("key")
+        except Exception as exc:
+            print(f"Skipping direct chord emission parse for {path}: {exc}")
+            continue
+
+        mode = "minor" if str(analyzed_key.mode).lower() == "minor" else "major"
+        sequence = _extract_direct_chord_emission_sequence_from_score(score, mode)
+        cached_files[key] = {
+            "schema": "direct_chord_emissions_v1",
+            "mtime_ns": mtime_ns,
+            "mode": mode,
+            "sequence": sequence,
+        }
+        if sequence:
+            sequences[mode].append(sequence)
+
+    _save_cache(cache_path, cache)
+
+    if all_files:
+        print(
+            f"Direct chord emission scan complete: {len(all_files)} files, "
+            f"{reused} loaded from cache, "
+            f"{len(sequences['major'])} major sequences, "
+            f"{len(sequences['minor'])} minor sequences."
+        )
+
+    return sequences
+
+
+def build_direct_chord_emission_model(sequences, laplace_alpha=1.0):
+    chord_keys = sorted(
+        {
+            (int(chord_key[0]), str(chord_key[1]))
+            for sequence in sequences or []
+            for chord_key in sequence.get("chords", [])
+        }
+    )
+    if not chord_keys:
+        return {}
+
+    emission_model = {}
+    for chord_key in chord_keys:
+        emission_model[chord_key] = np.full(
+            (len(HARMONIC_OBSERVATION_POSITIONS), 12),
+            float(laplace_alpha),
+            dtype=float,
+        )
+
+    for sequence in sequences or []:
+        for chord_key, observed_entries in zip(
+            sequence.get("chords", []), sequence.get("observations", [])
+        ):
+            normalized_key = (int(chord_key[0]), str(chord_key[1]))
+            if normalized_key not in emission_model:
+                continue
+            for pos, pc in observed_entries:
+                if int(pos) not in HARMONIC_OBSERVATION_POSITIONS:
+                    continue
+                emission_model[normalized_key][int(pos), int(pc) % 12] += 1.0
+
+    for chord_key, counts in emission_model.items():
+        emission_model[chord_key] = counts / counts.sum(axis=1, keepdims=True)
+
+    return emission_model
 
 
 def build_rhythm_template_model(templates, laplace_alpha=1.0):
@@ -1527,6 +1765,87 @@ def _roman_symbol_to_hidden_state(symbol, mode):
     if roman not in _harmonic_roman_states_for_mode(mode):
         return None
     return roman
+
+
+def _scale_degree_number(root_pc, key_root_pc, mode):
+    normalized_root = (int(root_pc) - int(key_root_pc)) % 12
+    intervals = (
+        MAJOR_SCALE_INTERVALS if str(mode).lower() == "major" else MINOR_SCALE_INTERVALS
+    )
+    if normalized_root not in intervals:
+        return None
+    return intervals.index(normalized_root) + 1
+
+
+def _scalar_direction_for_bar(chord_progression, bar_idx, key_root_pc, mode):
+    current_degree = _scale_degree_number(chord_progression[bar_idx][0], key_root_pc, mode)
+    if current_degree is None:
+        return None
+
+    for neighbor_idx in (bar_idx - 1, bar_idx + 1):
+        if neighbor_idx < 0 or neighbor_idx >= len(chord_progression):
+            continue
+        neighbor_degree = _scale_degree_number(
+            chord_progression[neighbor_idx][0], key_root_pc, mode
+        )
+        if neighbor_degree is None:
+            continue
+        diff = current_degree - neighbor_degree
+        if diff == 1:
+            return "ascending"
+        if diff == -1:
+            return "descending"
+    return None
+
+
+def _build_rule_of_the_octave_guidance(
+    chord_progression,
+    chord_model,
+    key_root_pc,
+    mode,
+    scale_pitch_classes=None,
+):
+    if key_root_pc is None:
+        return [None for _ in chord_progression]
+
+    roman_table = (
+        RULE_OF_OCTAVE_ROMAN_MINOR
+        if str(mode).lower() == "minor"
+        else RULE_OF_OCTAVE_ROMAN_MAJOR
+    )
+    guidance = []
+    for bar_idx, chord_token in enumerate(chord_progression):
+        degree = _scale_degree_number(chord_token[0], key_root_pc, mode)
+        direction = _scalar_direction_for_bar(chord_progression, bar_idx, key_root_pc, mode)
+        if degree is None or direction is None:
+            guidance.append(None)
+            continue
+
+        roman_symbols = roman_table.get(direction, {}).get(degree, ())
+        preferred_tokens = []
+        for symbol in roman_symbols:
+            preferred_tokens.append(
+                _roman_symbol_to_chord_token(
+                    symbol,
+                    chord_model=chord_model,
+                    key_root_pc=key_root_pc,
+                    mode=mode,
+                    scale_pitch_classes=scale_pitch_classes,
+                )
+            )
+        preferred_roots = {(int(token[0]), str(token[1])) for token in preferred_tokens}
+        bass_pc = (int(key_root_pc) + (
+            MAJOR_SCALE_INTERVALS if str(mode).lower() == "major" else MINOR_SCALE_INTERVALS
+        )[degree - 1]) % 12
+        guidance.append(
+            {
+                "direction": direction,
+                "degree": int(degree),
+                "preferred_roots": preferred_roots,
+                "preferred_bass_pitch_classes": {int(bass_pc)},
+            }
+        )
+    return guidance
 
 
 def _roman_symbol_to_relative_pitch_classes(symbol, mode):
@@ -2124,6 +2443,7 @@ def _score_sonority_transition(
     targets,
     repeat_streaks=None,
     repeated_note_base_penalty=CHORALE_REPEAT_NOTE_BASE_PENALTY,
+    rule_of_octave_hint=None,
 ):
     score = 0.0
 
@@ -2170,6 +2490,11 @@ def _score_sonority_transition(
                 prev_outer_interval = abs(int(prev["soprano"]) - int(prev["bass"])) % 12
                 if curr_outer_interval in {0, 7} and prev_outer_interval not in {0, 7}:
                     score += 1.4
+
+    if rule_of_octave_hint:
+        preferred_bass_pcs = set(rule_of_octave_hint.get("preferred_bass_pitch_classes", set()))
+        if preferred_bass_pcs and (int(curr["bass"]) % 12) in preferred_bass_pcs:
+            score -= float(RULE_OF_OCTAVE_BASS_BONUS)
 
     return float(score)
 
@@ -2237,6 +2562,7 @@ def _enumerate_sonority_candidates(
     top_sonorities_per_state,
     repeat_streaks=None,
     repeated_note_base_penalty=CHORALE_REPEAT_NOTE_BASE_PENALTY,
+    rule_of_octave_hint=None,
 ):
     sonority_scored = []
 
@@ -2276,6 +2602,7 @@ def _enumerate_sonority_candidates(
                             targets,
                             repeat_streaks=repeat_streaks,
                             repeated_note_base_penalty=repeated_note_base_penalty,
+                            rule_of_octave_hint=rule_of_octave_hint,
                         )
                         sonority_scored.append((transition_cost, sonority))
 
@@ -2302,6 +2629,7 @@ def _enumerate_sonority_candidates(
                             targets,
                             repeat_streaks=repeat_streaks,
                             repeated_note_base_penalty=repeated_note_base_penalty,
+                            rule_of_octave_hint=rule_of_octave_hint,
                         )
                         sonority_scored.append((transition_cost, sonority))
 
@@ -2360,7 +2688,6 @@ def generate_song(
         progression_laplace_alpha=progression_laplace_alpha,
         progression_blocks_by_mode=progression_blocks_by_mode,
     )
-
     total_notes = bars * beats_per_bar
     note_duration = CHORD_BAR_LENGTH / beats_per_bar
     interval_sequence = melody_model.interval_model.generate(max(1, total_notes - 1))
@@ -2419,10 +2746,8 @@ def generate_song_chorale(
     use_progression_blocks=True,
     progression_laplace_alpha=1.0,
     progression_blocks_by_mode=None,
-    soprano_rhythm_model=None,
-    soprano_rhythm_fallback_template=(1.0, 1.0, 1.0, 1.0),
-    accompaniment_rhythm_model=None,
-    accompaniment_rhythm_fallback_template=(2.0, 2.0),
+    voice_rhythm_models=None,
+    voice_rhythm_fallback_templates=None,
 ):
     chord_progression = _generate_song_chord_progression(
         chord_model=chord_model,
@@ -2436,30 +2761,53 @@ def generate_song_chorale(
         progression_laplace_alpha=progression_laplace_alpha,
         progression_blocks_by_mode=progression_blocks_by_mode,
     )
+    rule_of_octave_guidance = _build_rule_of_the_octave_guidance(
+        chord_progression,
+        chord_model=chord_model,
+        key_root_pc=key_root_pc,
+        mode=mode,
+        scale_pitch_classes=scale_pitch_classes,
+    )
 
-    soprano_rhythm_templates = sample_bar_rhythm_templates(
-        soprano_rhythm_model,
-        fallback_template=soprano_rhythm_fallback_template,
-        bars=bars,
-    )
-    accompaniment_rhythm_templates = sample_bar_rhythm_templates(
-        accompaniment_rhythm_model,
-        fallback_template=accompaniment_rhythm_fallback_template,
-        bars=bars,
-    )
+    if voice_rhythm_models is None:
+        voice_rhythm_models = {voice: None for voice in VOICE_ORDER}
+    if voice_rhythm_fallback_templates is None:
+        voice_rhythm_fallback_templates = {
+            "soprano": (1.0, 1.0, 1.0, 1.0),
+            "alto": (2.0, 2.0),
+            "tenor": (2.0, 2.0),
+            "bass": (2.0, 2.0),
+        }
+    voice_rhythm_templates = {
+        voice: sample_bar_rhythm_templates(
+            voice_rhythm_models.get(voice),
+            fallback_template=voice_rhythm_fallback_templates.get(voice, (2.0, 2.0)),
+            bars=bars,
+        )
+        for voice in VOICE_ORDER
+    }
     event_specs = []
-    accompaniment_change_points = {}
-    for bar_idx, template in enumerate(accompaniment_rhythm_templates):
-        onset = 0.0
-        accompaniment_change_points[int(bar_idx)] = {0.0}
-        for duration in template[:-1]:
-            onset += float(duration)
-            accompaniment_change_points[int(bar_idx)].add(float(round(onset, 6)))
+    for bar_idx in range(bars):
+        change_points_by_voice = {}
+        for voice in VOICE_ORDER:
+            template = voice_rhythm_templates[voice][bar_idx]
+            onset = 0.0
+            change_points = [0.0]
+            for duration in template[:-1]:
+                onset += float(duration)
+                change_points.append(float(round(onset, 6)))
+            change_points_by_voice[voice] = set(change_points)
 
-    for bar_idx, template in enumerate(soprano_rhythm_templates):
-        onset = 0.0
-        for duration in template:
-            duration = float(duration)
+        all_change_points = sorted(
+            set().union(*(change_points_by_voice[voice] for voice in VOICE_ORDER)) | {0.0}
+        )
+        all_change_points.append(float(CHORD_BAR_LENGTH))
+        all_change_points = sorted(set(float(round(x, 6)) for x in all_change_points))
+
+        for onset, next_onset in zip(all_change_points[:-1], all_change_points[1:]):
+            duration = float(next_onset - onset)
+            if duration <= 0:
+                continue
             accented = _is_accented_chorale_event(onset, duration)
             event_specs.append(
                 {
@@ -2467,11 +2815,12 @@ def generate_song_chorale(
                     "onset": float(onset),
                     "duration": float(duration),
                     "accented": bool(accented),
-                    "accompaniment_change": float(round(onset, 6))
-                    in accompaniment_change_points.get(int(bar_idx), {0.0}),
+                    "voice_changes": {
+                        voice: float(round(onset, 6)) in change_points_by_voice[voice]
+                        for voice in VOICE_ORDER
+                    },
                 }
             )
-            onset += duration
 
     total_notes = len(event_specs)
     interval_sequences = {
@@ -2493,6 +2842,11 @@ def generate_song_chorale(
         bar_idx = int(event["bar_idx"])
         root_pc, quality, _ = chord_progression[bar_idx]
         chord_classes = _chord_token_to_pitch_classes(root_pc, quality)
+        rule_of_octave_hint = (
+            rule_of_octave_guidance[bar_idx]
+            if bar_idx < len(rule_of_octave_guidance)
+            else None
+        )
 
         expanded = []
         for beam in beams:
@@ -2513,8 +2867,7 @@ def generate_song_chorale(
                 else:
                     voice_pitch_classes = chord_classes
                 if (
-                    voice in {"bass", "tenor", "alto"}
-                    and not event["accompaniment_change"]
+                    not event["voice_changes"].get(voice, True)
                     and prev_pitch is not None
                     and (prev_pitch % 12) in chord_classes
                 ):
@@ -2527,6 +2880,17 @@ def generate_song_chorale(
                     prev_midi=prev_pitch,
                     max_candidates_per_voice=max_candidates_per_voice,
                 )
+                if voice == "bass" and rule_of_octave_hint:
+                    preferred_bass_pcs = set(
+                        rule_of_octave_hint.get("preferred_bass_pitch_classes", set())
+                    )
+                    filtered_bass = [
+                        midi_value
+                        for midi_value in voice_candidates[voice]
+                        if (int(midi_value) % 12) in preferred_bass_pcs
+                    ]
+                    if filtered_bass:
+                        voice_candidates[voice] = filtered_bass
 
             sonority_candidates = _enumerate_sonority_candidates(
                 voice_candidates=voice_candidates,
@@ -2535,6 +2899,7 @@ def generate_song_chorale(
                 top_sonorities_per_state=top_sonorities_per_state,
                 repeat_streaks=beam["repeat_streaks"],
                 repeated_note_base_penalty=repeated_note_base_penalty,
+                rule_of_octave_hint=rule_of_octave_hint,
             )
 
             for sonority, local_cost in sonority_candidates:
@@ -2544,7 +2909,7 @@ def generate_song_chorale(
                     if prev_sonority is not None:
                         for voice in ["bass", "tenor", "alto"]:
                             if (
-                                not event["accompaniment_change"]
+                                not event["voice_changes"].get(voice, True)
                                 and int(sonority[voice]) != int(prev_sonority[voice])
                             ):
                                 local_cost += float(INNER_VOICE_WEAK_CHANGE_PENALTY)
@@ -2821,6 +3186,9 @@ def _fit_chords_to_melody(
     target_states=None,
     key_root_pc=None,
     mode="major",
+    rule_of_octave_guidance=None,
+    direct_chord_emission_model=None,
+    debug=False,
 ):
     if not melody_slots:
         return chord_progression
@@ -2831,17 +3199,15 @@ def _fit_chords_to_melody(
     if not states:
         return chord_progression
 
-    fitted = []
     beats_per_bar = max(1, int(beats_per_bar))
     strong_slots = {0, beats_per_bar // 2}
-    for bar_idx, original in enumerate(chord_progression):
+    num_bars = len(chord_progression)
+    position_index = {pos: idx for idx, pos in enumerate(HARMONIC_OBSERVATION_POSITIONS)}
+
+    def _candidate_score_components(candidate, bar_idx):
         start = bar_idx * beats_per_bar
         end = start + beats_per_bar
         bar_slots = melody_slots[start:end]
-        if not bar_slots:
-            fitted.append(original)
-            continue
-
         strong_pcs = [
             int(midi_value) % 12
             for i, midi_value in enumerate(bar_slots)
@@ -2852,10 +3218,91 @@ def _fit_chords_to_melody(
             for i, midi_value in enumerate(bar_slots)
             if midi_value is not None and i not in strong_slots
         ]
-        if not strong_pcs and not weak_pcs:
-            fitted.append(original)
-            continue
+        observed_entries = []
+        for i, midi_value in enumerate(bar_slots):
+            if midi_value is None:
+                continue
+            if i in strong_slots:
+                pos_idx = 0 if i == 0 else 1
+                observed_entries.append((int(pos_idx), int(midi_value) % 12))
+        pcs = _chord_token_to_pitch_classes(int(candidate[0]), str(candidate[1]))
+        strong_match = 3.0 * sum(1 for pc in strong_pcs if pc in pcs)
+        weak_match = 1.0 * sum(1 for pc in weak_pcs if pc in pcs)
+        strong_mismatch = -float(HARMONIZE_STRONG_BEAT_MISMATCH_PENALTY) * sum(
+            1 for pc in strong_pcs if pc not in pcs
+        )
+        weak_mismatch = -0.5 * sum(1 for pc in weak_pcs if pc not in pcs)
+        direct_emission = 0.0
+        if (
+            direct_chord_emission_model is not None
+            and key_root_pc is not None
+            and observed_entries
+        ):
+            normalized_key = (
+                int((int(candidate[0]) - int(key_root_pc)) % 12),
+                str(candidate[1]),
+            )
+            emission_probs = direct_chord_emission_model.get(normalized_key)
+            if emission_probs is not None:
+                emission_score = 0.0
+                for pos, pc in observed_entries:
+                    pos_idx = position_index.get(int(pos))
+                    if pos_idx is None:
+                        continue
+                    emission_score += float(np.log(max(1e-12, emission_probs[pos_idx, int(pc) % 12])))
+                direct_emission = 1.75 * emission_score
+        original_bias = 0.0
+        if (int(candidate[0]), str(candidate[1])) == (
+            int(chord_progression[bar_idx][0]),
+            str(chord_progression[bar_idx][1]),
+        ):
+            original_bias = 1.0
+        state_fit = 0.0
+        if target_states is not None and key_root_pc is not None and bar_idx < len(target_states):
+            candidate_state = _harmonic_roman_state_for_chord(
+                int(candidate[0]), str(candidate[1]), key_root_pc, mode
+            )
+            if candidate_state == target_states[bar_idx]:
+                state_fit = 2.5
+            elif candidate_state is not None:
+                state_fit = -1.5
+        roto_bonus = 0.0
+        if rule_of_octave_guidance is not None and bar_idx < len(rule_of_octave_guidance):
+            hint = rule_of_octave_guidance[bar_idx]
+            if hint:
+                preferred_roots = set(hint.get("preferred_roots", set()))
+                if (int(candidate[0]), str(candidate[1])) in preferred_roots:
+                    roto_bonus = 1.25
 
+        components = {
+            "strong_match": float(strong_match),
+            "weak_match": float(weak_match),
+            "strong_mismatch": float(strong_mismatch),
+            "weak_mismatch": float(weak_mismatch),
+            "direct_emission": float(direct_emission),
+            "original_bias": float(original_bias),
+            "state_fit": float(state_fit),
+            "roto_bonus": float(roto_bonus),
+        }
+        components["total"] = float(sum(components.values()))
+        components["strong_pcs"] = [int(pc) for pc in strong_pcs]
+        components["weak_pcs"] = [int(pc) for pc in weak_pcs]
+        return components
+
+    def local_score(candidate, bar_idx):
+        return float(_candidate_score_components(candidate, bar_idx)["total"])
+
+    candidate_pools = []
+    max_candidates_per_bar = 8
+    for bar_idx in range(num_bars):
+        start = bar_idx * beats_per_bar
+        end = start + beats_per_bar
+        bar_slots = melody_slots[start:end]
+        strong_pcs = {
+            int(midi_value) % 12
+            for i, midi_value in enumerate(bar_slots)
+            if midi_value is not None and i in strong_slots
+        }
         candidate_pool = list(states)
         if (
             target_states is not None
@@ -2875,26 +3322,137 @@ def _fit_chords_to_melody(
             if matching_states:
                 candidate_pool = matching_states
 
-        best_state = None
-        best_score = -10**9
-        for candidate in candidate_pool:
-            pcs = _chord_token_to_pitch_classes(int(candidate[0]), str(candidate[1]))
-            score = 0
-            score += 3 * sum(1 for pc in strong_pcs if pc in pcs)
-            score += 1 * sum(1 for pc in weak_pcs if pc in pcs)
-            score -= 2 * sum(1 for pc in strong_pcs if pc not in pcs)
-            if (int(candidate[0]), str(candidate[1])) == (int(original[0]), str(original[1])):
-                score += 1
-            if score > best_score:
-                best_score = score
-                best_state = candidate
+        if rule_of_octave_guidance is not None and bar_idx < len(rule_of_octave_guidance):
+            hint = rule_of_octave_guidance[bar_idx]
+            if hint:
+                preferred_roots = set(hint.get("preferred_roots", set()))
+                roto_pool = [
+                    candidate
+                    for candidate in candidate_pool
+                    if (int(candidate[0]), str(candidate[1])) in preferred_roots
+                ]
+                if roto_pool:
+                    candidate_pool = roto_pool
 
-        if best_state is None:
-            fitted.append(original)
+        if strong_pcs:
+            strong_match_pool = []
+            for candidate in candidate_pool:
+                pcs = _chord_token_to_pitch_classes(int(candidate[0]), str(candidate[1]))
+                if strong_pcs.issubset(pcs):
+                    strong_match_pool.append(candidate)
+            if strong_match_pool:
+                candidate_pool = strong_match_pool
+
+        ranked_pool = sorted(candidate_pool, key=lambda candidate: -local_score(candidate, bar_idx))
+        if ranked_pool:
+            candidate_pools.append(ranked_pool[:max_candidates_per_bar])
         else:
-            fitted.append((int(best_state[0]), str(best_state[1]), float(CHORD_BAR_LENGTH)))
+            candidate_pools.append([chord_progression[bar_idx]])
 
-    return fitted
+    second_order_model = chord_model.chord_model
+    state_index = second_order_model._state_indexes
+    log_initial = np.log(np.maximum(second_order_model.initial_pair_probabilities, 1e-12))
+    log_transition = np.log(np.maximum(second_order_model.transition_matrix, 1e-12))
+
+    if num_bars == 1:
+        first_pool = candidate_pools[0]
+        best = max(
+            first_pool,
+            key=lambda candidate: local_score(candidate, 0)
+            + float(
+                np.log(
+                    max(
+                        1e-12,
+                        float(
+                            second_order_model.initial_pair_probabilities[
+                                state_index[candidate], :
+                            ].sum()
+                            + second_order_model.initial_pair_probabilities[
+                                :, state_index[candidate]
+                            ].sum()
+                        ),
+                    )
+                )
+            ),
+        )
+        return [(int(best[0]), str(best[1]), float(CHORD_BAR_LENGTH))]
+
+    backpointers = {}
+    pair_scores = {}
+    for cand0 in candidate_pools[0]:
+        for cand1 in candidate_pools[1]:
+            idx0 = state_index[cand0]
+            idx1 = state_index[cand1]
+            pair_scores[(cand0, cand1)] = (
+                float(log_initial[idx0, idx1])
+                + local_score(cand0, 0)
+                + local_score(cand1, 1)
+            )
+
+    for bar_idx in range(2, num_bars):
+        next_scores = {}
+        for prev_pair, prev_score in pair_scores.items():
+            prev_prev, prev_curr = prev_pair
+            idx0 = state_index[prev_prev]
+            idx1 = state_index[prev_curr]
+            for candidate in candidate_pools[bar_idx]:
+                idx2 = state_index[candidate]
+                score = prev_score + float(log_transition[idx0, idx1, idx2]) + local_score(
+                    candidate, bar_idx
+                )
+                next_pair = (prev_curr, candidate)
+                if score > next_scores.get(next_pair, -np.inf):
+                    next_scores[next_pair] = score
+                    backpointers[(bar_idx, next_pair)] = prev_pair
+        pair_scores = next_scores
+
+    if not pair_scores:
+        return [
+            (int(token[0]), str(token[1]), float(CHORD_BAR_LENGTH))
+            for token in chord_progression
+        ]
+
+    final_pair = max(pair_scores, key=pair_scores.get)
+    decoded = [None] * num_bars
+    decoded[-2] = final_pair[0]
+    decoded[-1] = final_pair[1]
+    current_pair = final_pair
+    for bar_idx in range(num_bars - 1, 1, -1):
+        previous_pair = backpointers[(bar_idx, current_pair)]
+        decoded[bar_idx - 2] = previous_pair[0]
+        current_pair = previous_pair
+
+    if debug:
+        print("Harmonize chord debug:")
+        for bar_idx, chosen in enumerate(decoded):
+            ranked = sorted(
+                candidate_pools[bar_idx],
+                key=lambda candidate: -local_score(candidate, bar_idx),
+            )
+            chosen_key = (int(chosen[0]), str(chosen[1]))
+            target_state = (
+                None
+                if target_states is None or bar_idx >= len(target_states)
+                else target_states[bar_idx]
+            )
+            print(f"Bar {bar_idx + 1:02d} target_state={target_state} chosen={chosen_key}")
+            for candidate in ranked[:5]:
+                comp = _candidate_score_components(candidate, bar_idx)
+                print(
+                    "  "
+                    f"cand={(int(candidate[0]), str(candidate[1]))} "
+                    f"total={comp['total']:.2f} "
+                    f"strong={comp['strong_match']:.2f} "
+                    f"weak={comp['weak_match']:.2f} "
+                    f"strong_miss={comp['strong_mismatch']:.2f} "
+                    f"weak_miss={comp['weak_mismatch']:.2f} "
+                    f"emit={comp['direct_emission']:.2f} "
+                    f"state={comp['state_fit']:.2f} "
+                    f"roto={comp['roto_bonus']:.2f} "
+                    f"orig={comp['original_bias']:.2f}"
+                )
+
+    return [(int(token[0]), str(token[1]), float(CHORD_BAR_LENGTH)) for token in decoded]
 
 
 def generate_harmonized_chorale(
@@ -2915,6 +3473,8 @@ def generate_harmonized_chorale(
     progression_laplace_alpha=1.0,
     progression_blocks_by_mode=None,
     harmonic_emission_sequences_by_mode=None,
+    direct_chord_emission_model_by_mode=None,
+    debug_chords=False,
 ):
     beats_per_bar = max(1, int(beats_per_bar))
     total_notes = len(melody_slots)
@@ -2952,6 +3512,13 @@ def generate_harmonized_chorale(
         progression_laplace_alpha=progression_laplace_alpha,
         progression_blocks_by_mode=progression_blocks_by_mode,
     )
+    rule_of_octave_guidance = _build_rule_of_the_octave_guidance(
+        chord_progression,
+        chord_model=chord_model,
+        key_root_pc=key_root_pc,
+        mode=mode,
+        scale_pitch_classes=scale_pitch_classes,
+    )
     chord_progression = _fit_chords_to_melody(
         chord_progression=chord_progression,
         melody_slots=padded_slots,
@@ -2961,6 +3528,13 @@ def generate_harmonized_chorale(
         target_states=target_states,
         key_root_pc=key_root_pc,
         mode=mode,
+        rule_of_octave_guidance=rule_of_octave_guidance,
+        direct_chord_emission_model=(
+            None
+            if direct_chord_emission_model_by_mode is None
+            else direct_chord_emission_model_by_mode.get(mode_key)
+        ),
+        debug=debug_chords,
     )
     chord_progression = _apply_cadence_constraints(
         chord_progression,
@@ -2968,6 +3542,13 @@ def generate_harmonized_chorale(
         key_root_pc=key_root_pc,
         mode=mode,
         cadence_every_bars=cadence_every_bars,
+        scale_pitch_classes=scale_pitch_classes,
+    )
+    rule_of_octave_guidance = _build_rule_of_the_octave_guidance(
+        chord_progression,
+        chord_model=chord_model,
+        key_root_pc=key_root_pc,
+        mode=mode,
         scale_pitch_classes=scale_pitch_classes,
     )
 
@@ -2991,6 +3572,11 @@ def generate_harmonized_chorale(
         bar_idx = idx // beats_per_bar
         root_pc, quality, _ = chord_progression[bar_idx]
         allowed_classes = _chord_token_to_pitch_classes(root_pc, quality)
+        rule_of_octave_hint = (
+            rule_of_octave_guidance[bar_idx]
+            if bar_idx < len(rule_of_octave_guidance)
+            else None
+        )
         fixed_soprano = padded_slots[idx]
         if fixed_soprano is not None:
             s_low, s_high = VOICE_RANGES["soprano"]
@@ -3031,6 +3617,17 @@ def generate_harmonized_chorale(
                         prev_midi=prev_pitch,
                         max_candidates_per_voice=max_candidates_per_voice,
                     )
+                    if voice == "bass" and rule_of_octave_hint:
+                        preferred_bass_pcs = set(
+                            rule_of_octave_hint.get("preferred_bass_pitch_classes", set())
+                        )
+                        filtered_bass = [
+                            midi_value
+                            for midi_value in voice_candidates[voice]
+                            if (int(midi_value) % 12) in preferred_bass_pcs
+                        ]
+                        if filtered_bass:
+                            voice_candidates[voice] = filtered_bass
 
             sonority_candidates = _enumerate_sonority_candidates(
                 voice_candidates=voice_candidates,
@@ -3039,6 +3636,7 @@ def generate_harmonized_chorale(
                 top_sonorities_per_state=top_sonorities_per_state,
                 repeat_streaks=beam["repeat_streaks"],
                 repeated_note_base_penalty=repeated_note_base_penalty,
+                rule_of_octave_hint=rule_of_octave_hint,
             )
 
             for sonority, local_cost in sonority_candidates:
@@ -3525,6 +4123,11 @@ def parse_args():
         default=DEFAULT_MELODY_INPUT_FOLDER,
         help="Default folder searched for --melody-input files when a direct path is not found.",
     )
+    parser.add_argument(
+        "--harmonize-debug",
+        action="store_true",
+        help="Print per-bar harmonize chord candidates and score breakdowns.",
+    )
     return parser.parse_args()
 
 
@@ -3650,6 +4253,19 @@ def main():
             cache_path=harmonic_emission_cache,
             refresh_cache=args.refresh_cache,
         )
+        direct_chord_emission_cache = "cache/direct_chord_emissions_cache.json"
+        direct_chord_emission_sequences_by_mode = load_direct_chord_emission_sequences_from_folder(
+            args.melody_data_folder,
+            cache_path=direct_chord_emission_cache,
+            refresh_cache=args.refresh_cache,
+        )
+        direct_chord_emission_model_by_mode = {
+            mode_name: build_direct_chord_emission_model(
+                sequences,
+                laplace_alpha=args.laplace_alpha,
+            )
+            for mode_name, sequences in direct_chord_emission_sequences_by_mode.items()
+        }
 
         scale_pitch_classes = None
         if not args.disable_scale_snap:
@@ -3688,6 +4304,8 @@ def main():
                 progression_laplace_alpha=args.progression_laplace_alpha,
                 progression_blocks_by_mode=progression_blocks_by_mode,
                 harmonic_emission_sequences_by_mode=harmonic_emission_sequences_by_mode,
+                direct_chord_emission_model_by_mode=direct_chord_emission_model_by_mode,
+                debug_chords=args.harmonize_debug,
             )
         except ValueError as exc:
             if (
@@ -3774,14 +4392,15 @@ def main():
             cache_path=rhythm_template_cache,
             refresh_cache=args.refresh_cache,
         )
-        soprano_rhythm_model, soprano_rhythm_fallback_template = build_rhythm_template_model(
-            rhythm_templates["soprano"],
-            laplace_alpha=args.laplace_alpha,
-        )
-        accompaniment_rhythm_model, accompaniment_rhythm_fallback_template = build_rhythm_template_model(
-            rhythm_templates["accompaniment"],
-            laplace_alpha=args.laplace_alpha,
-        )
+        voice_rhythm_models = {}
+        voice_rhythm_fallback_templates = {}
+        for voice in VOICE_ORDER:
+            model, fallback = build_rhythm_template_model(
+                rhythm_templates[voice],
+                laplace_alpha=args.laplace_alpha,
+            )
+            voice_rhythm_models[voice] = model
+            voice_rhythm_fallback_templates[voice] = fallback
 
         if args.song_style == "chorale":
             _, voices = generate_song_chorale(
@@ -3801,10 +4420,8 @@ def main():
                 use_progression_blocks=not args.disable_progression_blocks,
                 progression_laplace_alpha=args.progression_laplace_alpha,
                 progression_blocks_by_mode=progression_blocks_by_mode,
-                soprano_rhythm_model=soprano_rhythm_model,
-                soprano_rhythm_fallback_template=soprano_rhythm_fallback_template,
-                accompaniment_rhythm_model=accompaniment_rhythm_model,
-                accompaniment_rhythm_fallback_template=accompaniment_rhythm_fallback_template,
+                voice_rhythm_models=voice_rhythm_models,
+                voice_rhythm_fallback_templates=voice_rhythm_fallback_templates,
             )
             visualize_song_chorale(voices)
         else:
@@ -3905,6 +4522,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
