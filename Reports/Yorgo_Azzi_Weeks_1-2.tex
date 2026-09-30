@@ -1,0 +1,157 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=0.2em,itemsep=0.2em}
+
+\definecolor{linkblue}{HTML}{1F4E79}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkblue,
+    urlcolor=linkblue,
+    pdftitle={VIP Weeks 1--2 Report},
+    pdfauthor={Yorgo Azzi}
+}
+
+\begin{document}
+
+\begin{center}
+    {\Large\bfseries VIP Weeks 1--2 Report}\\[0.5em]
+    {\large Yorgo Azzi}\\[0.25em]
+    September 22, 2026
+\end{center}
+
+\section{Overview}
+
+During these two weeks, I focused on adapting my Markov-chain symbolic music
+generator for movement-to-sound interaction. The original program generated
+music offline and included a command-line realtime mode, but it was not yet
+suited to continuous sensor input. The goal was to create a responsive system
+in which physical movement could control clear musical properties with minimal
+delay.
+
+For the first physical prototype, I used a laptop camera and a colored ribbon
+instead of phone sensors. This provides a simple way to test whether the
+movement-to-music relationship works before moving to a phone or rope-based
+interface.
+
+\section{Work Completed}
+
+\subsection{Realtime Music Engine}
+
+I separated the music-generation logic from the command-line interface and
+created a persistent realtime engine. The engine keeps the Markov history,
+chord progression, and SATB voice-leading state between musical events instead
+of regenerating a complete piece each time a control changes.
+
+I also added direct MIDI playback and a realtime performance runner. Control
+values can now change while the music continues playing, without waiting for a
+full bar or entering commands between generated sections.
+
+\subsection{Musical Controls and Rhythm}
+
+The original \texttt{intensity} control affected more than one musical
+property, so I divided it into two independent controls:
+
+\begin{itemize}
+    \item \texttt{volume} controls MIDI loudness;
+    \item \texttt{density} controls how fast the rhythm feels.
+\end{itemize}
+
+At first, density directly forced fixed note values such as quarter, eighth,
+or sixteenth notes. I replaced this with a hybrid approach that keeps the
+trained rhythm Markov model active. High density increases the probability of
+shorter learned durations, while low density favors longer durations. This
+makes the rhythm respond to movement without becoming completely mechanical.
+
+\subsection{Camera Movement Interface}
+
+I added an OpenCV interface that tracks a brightly colored ribbon or band in
+the webcam image. The program isolates the selected color, finds the largest
+matching blob, and estimates its position and movement speed.
+
+The current mapping is intentionally limited to two controls:
+
+\begin{itemize}
+    \item the ribbon's movement speed controls rhythmic density;
+    \item the ribbon's vertical position controls volume, with higher positions
+    producing louder music.
+\end{itemize}
+
+No other movement features currently affect the music. This keeps the first
+experiment easy to understand and evaluate.
+
+\section{Results}
+
+The main results were:
+
+\begin{itemize}
+    \item The existing music model was fast enough for realtime use. Generating
+    a four-beat chorale bar took approximately 40~ms in the initial benchmark.
+    \item The new event-based engine generated a musical tick in approximately
+    13.8~ms on average, which is comfortably below the available tick time at
+    120 beats per minute.
+    \item Volume and density can now be changed independently while the music
+    is playing.
+    \item Faster motion produces shorter notes on average, while the Markov
+    model continues to provide rhythmic variation.
+    \item The OpenCV tracker successfully detected a synthetic colored blob and
+    produced position and motion values.
+    \item All 12 automated tests for the realtime engine, rhythm behavior, and
+    camera mapping passed.
+\end{itemize}
+
+The prototype now connects the complete path from movement tracking to musical
+control: camera input, movement analysis, Markov-based generation, and realtime
+MIDI output.
+
+\section{Challenges}
+
+Several practical issues still need to be tested:
+
+\begin{itemize}
+    \item Camera tracking may change with lighting, background color, and motion
+    blur.
+    \item End-to-end delay has not yet been measured with a physical webcam and
+    audible MIDI output.
+    \item The movement-speed sensitivity and smoothing will need adjustment
+    through real use.
+    \item Realtime performances and movement data are not currently recorded
+    for later comparison.
+\end{itemize}
+
+\section{Next Steps}
+
+\begin{itemize}
+    \item Test the colored ribbon with the laptop webcam under different
+    lighting conditions.
+    \item Tune the color range, minimum blob size, speed sensitivity, and
+    smoothing values.
+    \item Measure the delay between a physical gesture and the resulting sound.
+    \item Record MIDI output and movement values so different mappings can be
+    compared.
+    \item Evaluate whether the speed--density and height--volume mappings feel
+    natural and produce musically useful results.
+    \item Use these results to decide whether to continue with phone sensors or
+    begin integrating a rope-based interface.
+\end{itemize}
+
+\section{Resources}
+
+\begin{itemize}
+    \item Project repository:
+    \url{https://github.com/YorgoAzzi/MarkovModel}
+    \item OpenCV documentation:
+    \url{https://docs.opencv.org/}
+\end{itemize}
+
+\end{document}

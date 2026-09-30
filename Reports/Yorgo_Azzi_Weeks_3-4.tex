@@ -1,0 +1,165 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=0.2em,itemsep=0.2em}
+
+\definecolor{linkblue}{HTML}{1F4E79}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkblue,
+    urlcolor=linkblue,
+    pdftitle={VIP Weeks 3--4 Report},
+    pdfauthor={Yorgo Azzi}
+}
+
+\begin{document}
+
+\begin{center}
+    {\Large\bfseries VIP Weeks 3--4 Report}\\[0.5em]
+    {\large Yorgo Azzi}\\[0.25em]
+    September 30, 2026
+\end{center}
+
+\section{Overview}
+
+During these two weeks, I replaced the colored-ribbon experiment with a
+two-hand interface based on Google MediaPipe. OpenCV still captures and
+displays the webcam image, while MediaPipe identifies both hands and returns
+21 landmarks for each one. These landmarks provide more detailed movement and
+gesture information than color-blob tracking and do not require the performer
+to wear a colored object.
+
+The main objective was to use the left hand for continuous controls and the
+right hand for harmony. The interface was connected to the existing realtime
+Markov and SATB generation engine so movement can affect the music without
+interrupting playback.
+
+\section{Work Completed}
+
+\subsection{MediaPipe Hand Interface}
+
+I added a MediaPipe Hand Landmarker model and a new realtime camera interface.
+OpenCV reads and mirrors the frames, MediaPipe detects the hands, and the
+program draws the landmarks and current control values over the camera image.
+Hand labels are swapped by default for the current mirrored-camera setup, with
+an option to disable the swap when necessary.
+
+The program processes MediaPipe frames asynchronously so that old camera
+frames can be dropped instead of building up delay. The music generator runs
+on a separate clock, allowing camera analysis and MIDI playback to continue at
+the same time.
+
+\subsection{Left-Hand Musical Controls}
+
+The left hand controls two continuous musical parameters:
+
+\begin{itemize}
+    \item palm height controls volume, with higher positions producing louder
+    music;
+    \item leftward hand tilt controls rhythmic density, with greater tilt
+    favoring shorter notes and a faster-feeling rhythm.
+\end{itemize}
+
+The tilt angle is smoothed before it reaches the generator. Density continues
+to bias the learned duration Markov model rather than forcing fixed note
+values, so the generated rhythm remains variable.
+
+\subsection{Right-Hand Chord Control}
+
+The right hand selects one of the seven scale degrees through finger
+combinations. The patterns progress from the index finger for the first degree
+to combinations involving additional fingers, while thumb-only selects the
+sixth degree and thumb plus index selects the seventh.
+
+The right-hand tilt determines chord quality:
+
+\begin{itemize}
+    \item leaning left selects a minor chord;
+    \item an upright hand uses the diatonic quality from the current key and
+    mode;
+    \item leaning right selects a major chord.
+\end{itemize}
+
+The selected key still defines the seven chord roots, but tilt can override
+their normal diatonic quality. A stable gesture is accepted after a short dwell
+time and applied at the next beat boundary. Unrecognized gestures and brief
+tracking losses preserve the last valid chord.
+
+\subsection{Gesture-Reliability Improvements}
+
+Initial tests showed that individual fingers sometimes changed state for one
+camera frame and that a tucked thumb was often interpreted as open. To improve
+accuracy, I added per-finger temporal filtering, joint-angle and straightness
+checks, short dropout tolerance, and a palm-relative thumb-distance test. The
+camera overlay now marks extended fingertips in green and folded fingertips in
+red, making calibration problems easier to identify.
+
+\section{Results}
+
+The completed prototype now connects the full interaction path:
+
+\begin{center}
+Camera $\rightarrow$ OpenCV $\rightarrow$ MediaPipe landmarks
+$\rightarrow$ movement controls $\rightarrow$ Markov/SATB engine
+$\rightarrow$ MIDI
+\end{center}
+
+The main results were:
+
+\begin{itemize}
+    \item Both hands can be tracked simultaneously without using a colored
+    ribbon.
+    \item Volume, density, scale degree, and chord quality can be controlled
+    while the music continues playing.
+    \item All 21 combinations of seven degrees and three quality modes produced
+    valid SATB sonorities in automated testing.
+    \item Finger filtering and thumb-to-palm distance improved chord-gesture
+    stability during camera use.
+    \item All 23 automated tests for camera controls, gesture recognition,
+    chord selection, rhythm behavior, and SATB generation passed.
+\end{itemize}
+
+\section{Challenges}
+
+Hand tracking is more expressive than colored-blob tracking, but it introduces
+new calibration problems. Fingers can overlap, a thumb can remain visually
+straight while folded across the palm, and detection may vary with camera
+angle and distance. Mirrored video can also reverse MediaPipe's left/right
+labels. These issues were reduced through configurable thresholds, temporal
+filtering, visual feedback, and default hand-label swapping, but physical
+testing remains important for tuning the interface to the performer.
+
+\section{Next Steps}
+
+\begin{itemize}
+    \item Look for additional musical parameters that could be controlled by
+    movement while keeping each mapping understandable.
+    \item Display the generated sheet music in real time as the performance is
+    being produced.
+    \item Create a complete architecture diagram showing the connections among
+    OpenCV, MediaPipe, movement analysis, the Markov models, SATB generation,
+    MIDI scheduling, and sound output.
+\end{itemize}
+
+\section{Resources}
+
+\begin{itemize}
+    \item Project repository:
+    \url{https://github.com/YorgoAzzi/MarkovModel}
+    \item MediaPipe Hand Landmarker documentation:
+    \url{https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker}
+    \item OpenCV documentation:
+    \url{https://docs.opencv.org/}
+\end{itemize}
+
+\end{document}

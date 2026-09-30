@@ -136,11 +136,116 @@ python "Code/markovchain.py" --task chord --length 16
 
 ### Realtime
 
+The original CLI-driven realtime mode generates and exports one bar at a time:
+
 ```bash
 python "Code/markovchain.py" --task realtime --realtime-bars 16
 ```
 
 Realtime mode writes `generated_realtime_live.musicxml` after each bar.
+
+### Low-latency movement prototype
+
+`Code/realtime_performance.py` runs a persistent SATB engine on a 16th-note
+clock. Movement controls are smoothed and can affect the next clock tick while
+the learned chord progression and voice-leading state continue across ticks.
+
+List MIDI outputs:
+
+```bash
+python "Code/realtime_performance.py" --list-midi-ports
+```
+
+Play through the first available MIDI output:
+
+```bash
+python "Code/realtime_performance.py" --tempo 120
+```
+
+Test generation and timing without a synthesizer:
+
+```bash
+python "Code/realtime_performance.py" --dry-run --ticks 64 --seed 7
+```
+
+Commands can be entered without stopping the playback clock:
+
+- `density 0.8` shortens generated note durations so the rhythm moves faster.
+- `volume 0.6` changes MIDI loudness without changing the rhythm.
+- `tilt -0.5` moves the voices toward a lower register.
+- `rotation 0.7` encourages wider motion and delays cadences.
+- `accent` accents the next generated attack.
+- `controls 0.8 0.6 -0.5 0.7` sets density, volume, tilt, and rotation together.
+- `key G`, `mode dorian`, `status`, and `quit` are also available.
+
+The engine itself is in `Code/realtime_engine.py`. Its `update_controls()` and
+`generate_tick()` methods are the integration points for a future phone sensor
+receiver; the phone connection does not need to know about the Markov internals.
+
+Realtime rhythm uses the trained second-order duration Markov model. Density
+biases its next-duration probabilities: low density favors longer learned
+durations and high density favors shorter ones. The result remains sampled, so
+the same movement can produce rhythmic variation instead of a fixed duration.
+If density rises during a long note, a dynamic duration limit lets the engine
+respond without waiting for the entire previously sampled note.
+
+### Colored-ribbon camera control
+
+The camera prototype tracks a brightly colored ribbon or band. Movement speed
+controls density, and vertical position controls volume:
+
+- Move slowly for longer, less dense rhythms; move quickly for shorter, denser rhythms.
+- Move down for quieter music; move up for louder music.
+
+Start it with:
+
+```bash
+python "Code/camera_performance.py" --tempo 120
+```
+
+Click the ribbon once in the camera window to calibrate its color, then move it.
+The camera controls only density and volume; horizontal position, acceleration,
+tilt, rotation, key, and mode do not affect the music.
+
+Useful calibration options include `--hue-tolerance`, `--min-area`, and
+`--max-speed`. Lower `--max-speed` if density reacts too weakly; raise it if
+density reaches maximum too easily. Press `Q` or Escape to stop. Use `--dry-run`
+to test tracking without sending MIDI.
+
+### MediaPipe two-hand control
+
+The two-hand interface uses MediaPipe landmarks while OpenCV continues to
+capture and display the webcam image. The official hand model is stored at
+`models/hand_landmarker.task`.
+
+- Left-hand height controls volume.
+- Left-hand tilt controls rhythmic density: upright or right is sparse, and
+  progressively leaning left makes the rhythm denser.
+- Right-hand finger patterns select scale degrees 1--7.
+- Right lean selects major, upright uses the diatonic quality, and left lean
+  selects minor.
+
+The chord gestures are: index=1, index+middle=2,
+index+middle+ring=3, index+middle+ring+pinky=4, all five fingers=5,
+thumb=6, and thumb+index=7. A fist or any other pattern holds the last accepted
+chord.
+
+Start the interface with:
+
+```bash
+python "Code/hand_performance.py" --tempo 120 --key C --mode major
+```
+
+Use `--dry-run` to test tracking without MIDI. Hand labels are swapped by
+default for the current mirrored-camera setup; add `--no-swap-hands` if the
+physical hands are already labeled correctly. Chord gestures must remain
+stable briefly and are applied on beat boundaries.
+Extended fingertips are shown in green and folded fingertips in red. If a
+normally extended finger remains red, lower `--finger-angle` slightly (for
+example, to `125`); raise it if folded fingers are being shown as extended.
+The thumb also uses its distance from the palm. If a tucked thumb remains green,
+raise `--thumb-spread` from `0.55` to `0.65`; lower it if an open thumb remains
+red.
 
 ## Notes
 

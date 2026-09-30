@@ -18,6 +18,31 @@ CHORD_DURATION_GRID = [1.0, 2.0, 4.0]
 CHORD_BAR_LENGTH = 4.0
 MAJOR_SCALE_INTERVALS = [0, 2, 4, 5, 7, 9, 11]
 MINOR_SCALE_INTERVALS = [0, 2, 3, 5, 7, 8, 10]
+MODE_SCALE_INTERVALS = {
+    "major": MAJOR_SCALE_INTERVALS,
+    "ionian": MAJOR_SCALE_INTERVALS,
+    "dorian": [0, 2, 3, 5, 7, 9, 10],
+    "phrygian": [0, 1, 3, 5, 7, 8, 10],
+    "lydian": [0, 2, 4, 6, 7, 9, 11],
+    "mixolydian": [0, 2, 4, 5, 7, 9, 10],
+    "minor": MINOR_SCALE_INTERVALS,
+    "aeolian": MINOR_SCALE_INTERVALS,
+    "locrian": [0, 1, 3, 5, 6, 8, 10],
+}
+MODE_ALIASES = {
+    "maj": "major",
+    "ion": "ionian",
+    "dor": "dorian",
+    "phr": "phrygian",
+    "lyd": "lydian",
+    "mix": "mixolydian",
+    "min": "minor",
+    "aeo": "aeolian",
+    "loc": "locrian",
+}
+MODE_CHOICES = tuple(MODE_SCALE_INTERVALS.keys())
+MAJOR_FAMILY_MODES = {"major", "ionian", "lydian", "mixolydian"}
+MINOR_FAMILY_MODES = {"minor", "aeolian", "dorian", "phrygian", "locrian"}
 PITCH_CLASS_MAP = {
     "C": 0,
     "B#": 0,
@@ -64,6 +89,7 @@ CHORALE_REPEAT_NOTE_STREAK_PENALTY = 2.0
 DEFAULT_MELODY_INPUT_FOLDER = "melodyInput"
 ROMAN_INTERVALS_MAJOR = {"i": 0, "ii": 2, "iii": 4, "iv": 5, "v": 7, "vi": 9, "vii": 11}
 ROMAN_INTERVALS_MINOR = {"i": 0, "ii": 2, "iii": 3, "iv": 5, "v": 7, "vi": 8, "vii": 10}
+ROMAN_DEGREE_INDEX = {"i": 0, "ii": 1, "iii": 2, "iv": 3, "v": 4, "vi": 5, "vii": 6}
 RHYTHM_MIN_UNIT = 0.25
 RHYTHM_NON_CHORD_TONE_PENALTY = 1.4
 INNER_VOICE_WEAK_CHANGE_PENALTY = 2.2
@@ -591,9 +617,26 @@ def _parse_key_root(key_name):
     raise ValueError(f"Unsupported key root: {key_name}")
 
 
+def _canonical_mode(mode):
+    normalized = str(mode).strip().lower()
+    normalized = MODE_ALIASES.get(normalized, normalized)
+    if normalized not in MODE_SCALE_INTERVALS:
+        choices = ", ".join(MODE_CHOICES)
+        raise ValueError(f"Unsupported mode: {mode}. Use one of: {choices}")
+    return normalized
+
+
+def _mode_scale_intervals(mode):
+    return MODE_SCALE_INTERVALS[_canonical_mode(mode)]
+
+
+def _mode_family(mode):
+    return "minor" if _canonical_mode(mode) in MINOR_FAMILY_MODES else "major"
+
+
 def _build_scale_pitch_classes(key_root, mode):
     base = _parse_key_root(key_root)
-    intervals = MAJOR_SCALE_INTERVALS if mode == "major" else MINOR_SCALE_INTERVALS
+    intervals = _mode_scale_intervals(mode)
     return {(base + interval) % 12 for interval in intervals}
 
 
@@ -761,7 +804,7 @@ def _extract_harmonic_emission_sequence_from_score(score, mode):
     parts = normalized_score.parts
     soprano_source = parts[0].flatten() if len(parts) > 0 else normalized_score.flatten()
     chord_source = normalized_score.chordify().flatten()
-    key_root_pc = 9 if str(mode).lower() == "minor" else 0
+    key_root_pc = 9 if _mode_family(mode) == "minor" else 0
 
     soprano_notes = []
     max_end = 0.0
@@ -852,7 +895,7 @@ def _extract_direct_chord_emission_sequence_from_score(score, mode):
     parts = normalized_score.parts
     soprano_source = parts[0].flatten() if len(parts) > 0 else normalized_score.flatten()
     chord_source = normalized_score.chordify().flatten()
-    key_root_pc = 9 if str(mode).lower() == "minor" else 0
+    key_root_pc = 9 if _mode_family(mode) == "minor" else 0
 
     soprano_notes = []
     max_end = 0.0
@@ -1642,7 +1685,7 @@ def _apply_cadence_constraints(
     tonic_root = int(key_root_pc) % 12
     dominant_root = (tonic_root + 7) % 12
 
-    if str(mode).lower() == "minor":
+    if _mode_family(mode) == "minor":
         tonic_quality_preferences = ["min", "min7"]
         dominant_quality_preferences = ["min", "min7", "7", "maj"]
     else:
@@ -1677,14 +1720,15 @@ def _apply_cadence_constraints(
 
 
 def _chord_token_to_roman_symbol(root_pc, quality, mode):
-    mode = str(mode).lower()
+    mode = _canonical_mode(mode)
     root_pc = int(root_pc) % 12
     quality = str(quality)
 
-    if mode == "minor":
-        interval_to_roman = {0: "i", 2: "ii", 3: "iii", 5: "iv", 7: "v", 8: "vi", 10: "vii"}
-    else:
-        interval_to_roman = {0: "i", 2: "ii", 4: "iii", 5: "iv", 7: "v", 9: "vi", 11: "vii"}
+    degree_names = ("i", "ii", "iii", "iv", "v", "vi", "vii")
+    interval_to_roman = {
+        int(interval): degree_names[idx]
+        for idx, interval in enumerate(_mode_scale_intervals(mode))
+    }
 
     base = interval_to_roman.get(root_pc)
     if base is None:
@@ -1744,7 +1788,7 @@ def _normalize_roman_state(symbol):
 def _harmonic_roman_states_for_mode(mode):
     return (
         HARMONIC_ROMAN_STATES_MINOR
-        if str(mode).lower() == "minor"
+        if _mode_family(mode) == "minor"
         else HARMONIC_ROMAN_STATES_MAJOR
     )
 
@@ -1769,9 +1813,7 @@ def _roman_symbol_to_hidden_state(symbol, mode):
 
 def _scale_degree_number(root_pc, key_root_pc, mode):
     normalized_root = (int(root_pc) - int(key_root_pc)) % 12
-    intervals = (
-        MAJOR_SCALE_INTERVALS if str(mode).lower() == "major" else MINOR_SCALE_INTERVALS
-    )
+    intervals = _mode_scale_intervals(mode)
     if normalized_root not in intervals:
         return None
     return intervals.index(normalized_root) + 1
@@ -1810,7 +1852,7 @@ def _build_rule_of_the_octave_guidance(
 
     roman_table = (
         RULE_OF_OCTAVE_ROMAN_MINOR
-        if str(mode).lower() == "minor"
+        if _mode_family(mode) == "minor"
         else RULE_OF_OCTAVE_ROMAN_MAJOR
     )
     guidance = []
@@ -1834,9 +1876,7 @@ def _build_rule_of_the_octave_guidance(
                 )
             )
         preferred_roots = {(int(token[0]), str(token[1])) for token in preferred_tokens}
-        bass_pc = (int(key_root_pc) + (
-            MAJOR_SCALE_INTERVALS if str(mode).lower() == "major" else MINOR_SCALE_INTERVALS
-        )[degree - 1]) % 12
+        bass_pc = (int(key_root_pc) + _mode_scale_intervals(mode)[degree - 1]) % 12
         guidance.append(
             {
                 "direction": direction,
@@ -1860,7 +1900,10 @@ def _roman_symbol_to_relative_pitch_classes(symbol, mode):
     raw = raw.replace("Â°", "").replace("°", "")
 
     roman = raw.lower()
-    intervals = ROMAN_INTERVALS_MINOR if str(mode).lower() == "minor" else ROMAN_INTERVALS_MAJOR
+    intervals = {
+        roman: _mode_scale_intervals(mode)[degree_idx]
+        for roman, degree_idx in ROMAN_DEGREE_INDEX.items()
+    }
     if roman not in intervals:
         return set()
 
@@ -2236,7 +2279,10 @@ def _roman_symbol_to_chord_token(symbol, chord_model, key_root_pc, mode, scale_p
     raw = raw.replace("°", "")
 
     roman = raw.lower()
-    intervals = ROMAN_INTERVALS_MINOR if str(mode).lower() == "minor" else ROMAN_INTERVALS_MAJOR
+    intervals = {
+        roman: _mode_scale_intervals(mode)[degree_idx]
+        for roman, degree_idx in ROMAN_DEGREE_INDEX.items()
+    }
     if roman not in intervals:
         roman = "i"
     root_pc = (int(key_root_pc) + intervals[roman]) % 12
@@ -2319,7 +2365,7 @@ def _generate_song_chord_progression(
     progression_blocks_by_mode=None,
 ):
     if use_progression_blocks and key_root_pc is not None:
-        mode_key = "minor" if str(mode).lower() == "minor" else "major"
+        mode_key = _mode_family(mode)
         learned_blocks = None
         if progression_blocks_by_mode:
             learned_blocks = progression_blocks_by_mode.get(mode_key) or None
@@ -2992,7 +3038,7 @@ def _generate_realtime_chord_bar(
     use_progression_blocks,
     progression_laplace_alpha,
 ):
-    mode_key = "minor" if str(mode).lower() == "minor" else "major"
+    mode_key = _mode_family(mode)
     one_bar = _generate_song_chord_progression(
         chord_model=chord_model,
         bars=bar_index + 1,
@@ -3482,7 +3528,7 @@ def generate_harmonized_chorale(
     padded_slots = list(melody_slots) + [None] * (bars * beats_per_bar - total_notes)
     target_states = None
     if key_root_pc is not None and progression_blocks_by_mode:
-        mode_key = "minor" if str(mode).lower() == "minor" else "major"
+        mode_key = _mode_family(mode)
         harmonic_hmm = _build_harmonic_function_hmm(
             progression_blocks_by_mode.get(mode_key) or [],
             mode=mode,
@@ -3721,7 +3767,11 @@ def run_realtime_session(args, melody_model, chord_model):
     }
 
     def print_help():
-        print("Commands: enter=next | key <C/G/F#...> | mode <major/minor> | density <1-8>")
+        print(
+            "Commands: enter=next | key <C/G/F#...> | "
+            "mode <major/minor/dorian/phrygian/lydian/mixolydian/aeolian/locrian> | "
+            "density <1-8>"
+        )
         print("          cadence <N> | tension <0..1> | show | stop")
 
     print_help()
@@ -3812,9 +3862,7 @@ def run_realtime_session(args, melody_model, chord_model):
                 _parse_key_root(value)
                 state["key"] = value
             elif action == "mode":
-                if value.lower() not in {"major", "minor"}:
-                    raise ValueError("mode must be major or minor")
-                state["mode"] = value.lower()
+                state["mode"] = _canonical_mode(value)
             elif action in {"density", "beats", "beats_per_bar"}:
                 beats = int(value)
                 if beats < 1 or beats > 8:
@@ -3982,9 +4030,9 @@ def parse_args():
     )
     parser.add_argument(
         "--mode",
-        choices=["major", "minor"],
+        choices=MODE_CHOICES,
         default="major",
-        help="Scale mode used when snapping to scale.",
+        help="Scale mode used when snapping to scale and filtering chords.",
     )
     parser.add_argument(
         "--disable-scale-snap",
