@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2800" height="1800" viewBox="0 0 2800 1800">
+<defs>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="4" stdDeviation="5" flood-opacity="0.10"/></filter>
+<marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="context-stroke"/></marker>
+</defs>
+<rect width="2800" height="1800" fill="#F3F6F9"/>
+<text x="80" y="100" font-family="Segoe UI, Arial, sans-serif" font-size="54" font-weight="600" fill="#183042" text-anchor="start">Movement-Controlled Markov Music System</text>
+<text x="82" y="155" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="400" fill="#557083" text-anchor="start">Realtime architecture: vision → gestures → symbolic generation → sound and live notation</text>
+<rect x="70" y="235" width="470" height="1300" rx="24" fill="#EAF5FB" stroke="#2877A5" stroke-width="3"/>
+<path d="M94,235 H516 Q540,235 540,259 V317 H70 V259 Q70,235 94,235 Z" fill="#2877A5"/>
+<text x="94" y="289" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#FFFFFF" text-anchor="start">1  VISION</text>
+<text x="92" y="340" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="400" fill="#2877A5" text-anchor="start">camera and landmark extraction</text>
+<rect x="585" y="235" width="575" height="1300" rx="24" fill="#EAF7F3" stroke="#27856F" stroke-width="3"/>
+<path d="M609,235 H1136 Q1160,235 1160,259 V317 H585 V259 Q585,235 609,235 Z" fill="#27856F"/>
+<text x="609" y="289" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#FFFFFF" text-anchor="start">2  GESTURE MAPPING</text>
+<text x="607" y="340" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="400" fill="#27856F" text-anchor="start">movement becomes musical control</text>
+<rect x="1205" y="235" width="730" height="1300" rx="24" fill="#FFF5E5" stroke="#C2781B" stroke-width="3"/>
+<path d="M1229,235 H1911 Q1935,235 1935,259 V317 H1205 V259 Q1205,235 1229,235 Z" fill="#C2781B"/>
+<text x="1229" y="289" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#FFFFFF" text-anchor="start">3  MUSIC GENERATION</text>
+<text x="1227" y="340" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="400" fill="#C2781B" text-anchor="start">persistent Markov and SATB state</text>
+<rect x="1980" y="235" width="750" height="1300" rx="24" fill="#F2EEFA" stroke="#765BA8" stroke-width="3"/>
+<path d="M2004,235 H2706 Q2730,235 2730,259 V317 H1980 V259 Q1980,235 2004,235 Z" fill="#765BA8"/>
+<text x="2004" y="289" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#FFFFFF" text-anchor="start">4  OUTPUT</text>
+<text x="2002" y="340" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="400" fill="#765BA8" text-anchor="start">sound and notation from one event</text>
+<polyline points="305,495 305,570" fill="none" stroke="#2877A5" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="305,745 305,825" fill="none" stroke="#2877A5" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="305,1040 305,1125" fill="none" stroke="#2877A5" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="485,1210 555,1210 555,560 635,560" fill="none" stroke="#27856F" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="485,1210 570,1210 570,1030 635,1030" fill="none" stroke="#27856F" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1110,560 1180,560 1180,420 1260,420" fill="none" stroke="#27856F" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1110,1030 1190,1030 1190,475 1260,475" fill="none" stroke="#27856F" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="872,775 1125,775 1125,1367 1110,1367" fill="none" stroke="#27856F" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="12 10"/>
+<polyline points="872,1210 872,1290" fill="none" stroke="#27856F" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)" stroke-dasharray="12 10"/>
+<polyline points="1570,525 1570,815 1500,815 1500,850" fill="none" stroke="#C2781B" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1402,780 1402,850" fill="none" stroke="#C2781B" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1737,780 1737,850" fill="none" stroke="#C2781B" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1570,1200 1570,1280" fill="none" stroke="#C2781B" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1880,1362 1960,1362 1960,418 2040,418" fill="none" stroke="#A85B22" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="1880,1398 1995,1398 1995,1042 2040,1042" fill="none" stroke="#765BA8" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="2355,485 2355,545" fill="none" stroke="#A85B22" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="2355,690 2355,750" fill="none" stroke="#A85B22" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="2355,1100 2355,1125 2187,1125 2187,1160" fill="none" stroke="#765BA8" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="2335,1227 2375,1227" fill="none" stroke="#765BA8" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="2522,1295 2522,1360" fill="none" stroke="#765BA8" stroke-width="5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="125" y="350" width="360" height="145" rx="20" fill="#FFFFFF" stroke="#2877A5" stroke-width="3" filter="url(#shadow)"/>
+<rect x="125" y="350" width="12" height="145" rx="6" fill="#2877A5"/>
+<text x="155" y="401" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">Laptop camera</text>
+<text x="156" y="443" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Live RGB video frames</text>
+<rect x="125" y="570" width="360" height="175" rx="20" fill="#FFFFFF" stroke="#2877A5" stroke-width="3" filter="url(#shadow)"/>
+<rect x="125" y="570" width="12" height="175" rx="6" fill="#2877A5"/>
+<text x="155" y="621" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">OpenCV</text>
+<text x="156" y="663" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Capture and mirror frames</text>
+<text x="156" y="703" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Display tracking overlay</text>
+<rect x="125" y="825" width="360" height="215" rx="20" fill="#FFFFFF" stroke="#2877A5" stroke-width="3" filter="url(#shadow)"/>
+<rect x="125" y="825" width="12" height="215" rx="6" fill="#2877A5"/>
+<text x="155" y="876" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">MediaPipe Hand Landmarker</text>
+<text x="156" y="918" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Detect two hands</text>
+<text x="156" y="958" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Return 21 landmarks per hand</text>
+<text x="156" y="998" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Label left and right hands</text>
+<rect x="125" y="1125" width="360" height="170" rx="20" fill="#FFFFFF" stroke="#2877A5" stroke-width="3" filter="url(#shadow)"/>
+<rect x="125" y="1125" width="12" height="170" rx="6" fill="#2877A5"/>
+<text x="155" y="1176" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">Hand observations</text>
+<text x="156" y="1218" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Position, shape and depth</text>
+<text x="156" y="1258" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">with timestamps</text>
+<rect x="635" y="350" width="475" height="425" rx="20" fill="#FFFFFF" stroke="#27856F" stroke-width="3" filter="url(#shadow)"/>
+<rect x="635" y="350" width="12" height="425" rx="6" fill="#27856F"/>
+<text x="665" y="401" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">Left hand — expression</text>
+<text x="666" y="443" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Height  →  melodic activity</text>
+<text x="666" y="483" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Horizontal speed  →  tempo</text>
+<text x="666" y="523" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Openness  →  articulation</text>
+<text x="666" y="563" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Forward / backward  →  brightness</text>
+<rect x="635" y="855" width="475" height="355" rx="20" fill="#FFFFFF" stroke="#27856F" stroke-width="3" filter="url(#shadow)"/>
+<rect x="635" y="855" width="12" height="355" rx="6" fill="#27856F"/>
+<text x="665" y="906" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">Right hand — harmony</text>
+<text x="666" y="948" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Height  →  register</text>
+<text x="666" y="988" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Finger pattern  →  scale degree 1–7</text>
+<text x="666" y="1028" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Tilt  →  minor / diatonic / major</text>
+<rect x="635" y="1290" width="475" height="155" rx="20" fill="#FFFFFF" stroke="#27856F" stroke-width="3" filter="url(#shadow)"/>
+<rect x="635" y="1290" width="12" height="155" rx="6" fill="#27856F"/>
+<text x="665" y="1341" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">Stabilization</text>
+<text x="666" y="1383" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Smoothing, finger filtering</text>
+<text x="666" y="1423" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">and gesture dwell time</text>
+<rect x="1260" y="350" width="620" height="175" rx="20" fill="#FFFFFF" stroke="#C2781B" stroke-width="3" filter="url(#shadow)"/>
+<rect x="1260" y="350" width="12" height="175" rx="6" fill="#C2781B"/>
+<text x="1290" y="401" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">Realtime control interface</text>
+<text x="1291" y="443" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Smoothed continuous controls</text>
+<text x="1291" y="483" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Tempo clock + stable chord requests</text>
+<rect x="1260" y="600" width="285" height="180" rx="20" fill="#FFFFFF" stroke="#C2781B" stroke-width="3" filter="url(#shadow)"/>
+<rect x="1260" y="600" width="12" height="180" rx="6" fill="#C2781B"/>
+<text x="1290" y="651" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600" fill="#183042" text-anchor="start">Melody model</text>
+<text x="1291" y="693" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">Second-order Markov</text>
+<text x="1291" y="731" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">pitch intervals + rhythm</text>
+<rect x="1595" y="600" width="285" height="180" rx="20" fill="#FFFFFF" stroke="#C2781B" stroke-width="3" filter="url(#shadow)"/>
+<rect x="1595" y="600" width="12" height="180" rx="6" fill="#C2781B"/>
+<text x="1625" y="651" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600" fill="#183042" text-anchor="start">Harmony model</text>
+<text x="1626" y="693" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">Chord Markov model</text>
+<text x="1626" y="731" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">progression blocks</text>
+<rect x="1260" y="850" width="620" height="350" rx="20" fill="#FFFFFF" stroke="#C2781B" stroke-width="3" filter="url(#shadow)"/>
+<rect x="1260" y="850" width="12" height="350" rx="6" fill="#C2781B"/>
+<text x="1290" y="901" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">RealtimeChoraleEngine</text>
+<text x="1291" y="943" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Maintains persistent pitch, rhythm and chord history</text>
+<text x="1291" y="983" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Biases learned choices using hand controls</text>
+<text x="1291" y="1023" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Applies performer-selected chord degree and quality</text>
+<text x="1291" y="1063" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Runs constrained SATB beam search and voice leading</text>
+<rect x="1260" y="1280" width="620" height="165" rx="20" fill="#FFFDF8" stroke="#C2781B" stroke-width="3" filter="url(#shadow)"/>
+<rect x="1260" y="1280" width="12" height="165" rx="6" fill="#C2781B"/>
+<text x="1290" y="1331" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">GeneratedTick</text>
+<text x="1291" y="1373" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">SATB pitches • rhythm • chord • tempo</text>
+<text x="1291" y="1413" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">velocity • articulation • brightness</text>
+<rect x="2040" y="350" width="630" height="135" rx="20" fill="#FFFFFF" stroke="#A85B22" stroke-width="3" filter="url(#shadow)"/>
+<rect x="2040" y="350" width="12" height="135" rx="6" fill="#A85B22"/>
+<text x="2070" y="401" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">Realtime scheduler</text>
+<text x="2071" y="443" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Audio clock receives every GeneratedTick</text>
+<rect x="2040" y="545" width="630" height="145" rx="20" fill="#FFFFFF" stroke="#A85B22" stroke-width="3" filter="url(#shadow)"/>
+<rect x="2040" y="545" width="12" height="145" rx="6" fill="#A85B22"/>
+<text x="2070" y="596" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">MIDI player</text>
+<text x="2071" y="638" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Note on/off • expression • timbre controls</text>
+<rect x="2040" y="750" width="630" height="145" rx="20" fill="#FFF7EE" stroke="#A85B22" stroke-width="3" filter="url(#shadow)"/>
+<rect x="2040" y="750" width="12" height="145" rx="6" fill="#A85B22"/>
+<text x="2070" y="801" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" fill="#183042" text-anchor="start">MIDI synthesizer</text>
+<text x="2071" y="843" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="400" fill="#557083" text-anchor="start">Four SATB channels  →  audible music</text>
+<rect x="2040" y="985" width="630" height="115" rx="20" fill="#FFFFFF" stroke="#765BA8" stroke-width="3" filter="url(#shadow)"/>
+<rect x="2040" y="985" width="12" height="115" rx="6" fill="#765BA8"/>
+<text x="2070" y="1036" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600" fill="#183042" text-anchor="start">Asynchronous notation queue</text>
+<text x="2071" y="1078" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">Only new note onsets are queued</text>
+<rect x="2040" y="1160" width="295" height="135" rx="20" fill="#FFFFFF" stroke="#765BA8" stroke-width="3" filter="url(#shadow)"/>
+<rect x="2040" y="1160" width="12" height="135" rx="6" fill="#765BA8"/>
+<text x="2070" y="1211" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600" fill="#183042" text-anchor="start">music21</text>
+<text x="2071" y="1253" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">Build SATB MusicXML</text>
+<rect x="2375" y="1160" width="295" height="135" rx="20" fill="#FFFFFF" stroke="#765BA8" stroke-width="3" filter="url(#shadow)"/>
+<rect x="2375" y="1160" width="12" height="135" rx="6" fill="#765BA8"/>
+<text x="2405" y="1211" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600" fill="#183042" text-anchor="start">Verovio</text>
+<text x="2406" y="1253" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">Engrave MusicXML as SVG</text>
+<rect x="2040" y="1360" width="630" height="125" rx="20" fill="#F8F5FD" stroke="#765BA8" stroke-width="3" filter="url(#shadow)"/>
+<rect x="2040" y="1360" width="12" height="125" rx="6" fill="#765BA8"/>
+<text x="2070" y="1411" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="600" fill="#183042" text-anchor="start">Browser live score</text>
+<text x="2071" y="1453" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="400" fill="#557083" text-anchor="start">Current section + scrollable performance history</text>
+<rect x="268.0" y="500.5" width="74" height="28" rx="8" fill="#F3F6F9"/>
+<text x="305.0" y="521.5" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#2877A5" text-anchor="middle">frames</text>
+<rect x="251.0" y="753.0" width="108" height="28" rx="8" fill="#F3F6F9"/>
+<text x="305.0" y="774.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#2877A5" text-anchor="middle">BGR frames</text>
+<rect x="255.5" y="1050.5" width="99" height="28" rx="8" fill="#F3F6F9"/>
+<text x="305.0" y="1071.5" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#2877A5" text-anchor="middle">landmarks</text>
+<rect x="505.5" y="853.0" width="99" height="28" rx="8" fill="#F3F6F9"/>
+<text x="555.0" y="874.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#27856F" text-anchor="middle">left hand</text>
+<rect x="516.0" y="1088.0" width="108" height="28" rx="8" fill="#F3F6F9"/>
+<text x="570.0" y="1109.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#27856F" text-anchor="middle">right hand</text>
+<rect x="1334.5" y="783.0" width="135" height="28" rx="8" fill="#F3F6F9"/>
+<text x="1402.0" y="804.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#C2781B" text-anchor="middle">learned state</text>
+<rect x="1696.5" y="783.0" width="81" height="28" rx="8" fill="#F3F6F9"/>
+<text x="1737.0" y="804.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#C2781B" text-anchor="middle">harmony</text>
+<rect x="1493.5" y="1208.0" width="153" height="28" rx="8" fill="#F3F6F9"/>
+<text x="1570.0" y="1229.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#C2781B" text-anchor="middle">one clock event</text>
+<rect x="1906.0" y="858.0" width="108" height="28" rx="8" fill="#F3F6F9"/>
+<text x="1960.0" y="879.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#A85B22" text-anchor="middle">same event</text>
+<rect x="2310.0" y="483.0" width="90" height="28" rx="8" fill="#F3F6F9"/>
+<text x="2355.0" y="504.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#A85B22" text-anchor="middle">schedule</text>
+<rect x="2318.0" y="688.0" width="74" height="28" rx="8" fill="#F3F6F9"/>
+<text x="2355.0" y="709.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#A85B22" text-anchor="middle">MIDI</text>
+<rect x="2234.0" y="1093.0" width="74" height="28" rx="8" fill="#F3F6F9"/>
+<text x="2271.0" y="1114.0" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#765BA8" text-anchor="middle">events</text>
+<rect x="2485.0" y="1295.5" width="74" height="28" rx="8" fill="#F3F6F9"/>
+<text x="2522.0" y="1316.5" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#765BA8" text-anchor="middle">SVG</text>
+<rect x="420" y="1600" width="1960" height="110" rx="24" fill="#E4EBF0"/>
+<text x="1400" y="1664" font-family="Segoe UI, Arial, sans-serif" font-size="25" font-weight="600" fill="#183042" text-anchor="middle">One GeneratedTick drives both outputs. The live score reads symbolic notes directly and never transcribes the audio.</text>
+</svg>

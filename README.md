@@ -20,6 +20,15 @@ Parameter reference:
 pip install -r requirements.txt
 ```
 
+TensorFlow is not used by this project. If an older installation causes a
+TensorFlow DLL error while MediaPipe starts, remove it and reinstall the project
+dependencies:
+
+```bash
+python -m pip uninstall tensorflow
+pip install -r requirements.txt
+```
+
 3. Configure `music21` once so score files open correctly:
 
 ```bash
@@ -216,11 +225,16 @@ to test tracking without sending MIDI.
 
 The two-hand interface uses MediaPipe landmarks while OpenCV continues to
 capture and display the webcam image. The official hand model is stored at
-`models/hand_landmarker.task`.
+`models/hand_landmarker.task`. It now has two modes that can be changed without
+restarting the performance.
 
-- Left-hand height controls volume.
-- Left-hand tilt controls rhythmic density: upright or right is sparse, and
-  progressively leaning left makes the rhythm denser.
+**Full SATB mode** keeps the original interface:
+
+- Right-hand height controls the generated register.
+- Left-hand height controls melodic activity.
+- Left-hand horizontal speed controls tempo; maximum tempo is reached at a
+  deliberately slow default movement speed of 0.20 screen widths per second.
+- Left-hand openness controls articulation from staccato to legato.
 - Right-hand finger patterns select scale degrees 1--7.
 - Right lean selects major, upright uses the diatonic quality, and left lean
   selects minor.
@@ -230,11 +244,58 @@ index+middle+ring=3, index+middle+ring+pinky=4, all five fingers=5,
 thumb=6, and thumb+index=7. A fist or any other pattern holds the last accepted
 chord.
 
+**Soprano Performance mode** changes the musical roles:
+
+- The Markov/voice-leading engine generates alto, tenor, and bass only.
+- Moving the right hand upward or downward steps successively through the
+  selected key and mode for the soprano, independently of the current chord.
+- A stationary right hand holds one continuous soprano note; moving vertically
+  replaces it immediately with the next scale note.
+- A quick horizontal right-hand shake starts a trill.
+- A quick index-finger bend and release plays a mordent.
+- The number of extended fingers changes only the soprano timbre: one=piano,
+  two=violin, three=choir, four=flute, and five=synth pad.
+- A thumb-index pinch sustains the soprano, and a fist rests it.
+- Left-hand height controls the register of alto, tenor, and bass; horizontal
+  speed controls tempo; openness controls articulation.
+- Chord gestures are disabled in this mode.
+
+Forward/backward brightness control has been removed from the hand interface.
+
 Start the interface with:
 
 ```bash
-python "Code/hand_performance.py" --tempo 120 --key C --mode major
+python "Code/hand_performance.py" --tempo 60 --max-tempo 140 --key C --mode major
 ```
+
+Click **Full SATB** or **Soprano Performance** at the bottom of the camera
+window to switch modes. Click **Pause/Play** to stop or resume generation while
+hand tracking continues. Keyboard shortcuts are `1`, `2`, and Space. You can
+start directly in the second mode with `--performance-mode soprano`.
+
+The hand interface runs the musical clock at 16 ticks per beat. Soprano scale
+steps can therefore reach the scheduler on the next fine tick. A stationary
+note has no scheduled MIDI note-off; the next scale step, ornament, fist, pause,
+or mode change ends it immediately. Use `--soprano-step` to change how much
+vertical travel produces one scale step, `--pinch-distance` to tune pinch
+detection, `--trill-shake-speed` to tune the trill, and `--timbre-dwell` to
+control how long a finger count must remain stable before the sound changes.
+
+### Live sheet music
+
+The PyQt performance window places the camera and live SATB score side by side.
+Soprano and alto appear on the treble staff, tenor and bass on the bass staff,
+and the current sonority is red. The active section contains four measures by
+default and updates whenever the generator starts new notes. Completed sections
+remain in the scrollable score panel. The display follows the newest section
+until you scroll upward; the **Follow live** button returns to the current music.
+
+Music playback does not wait for notation. Generated onsets enter a queue, and
+a background worker converts them through `music21` to MusicXML and Verovio to
+SVG. The Qt interface renders those SVG pages directly inside the application.
+
+Use `--score-bars 6` to show six measures in each score section or
+`--no-live-score` to hide the score panel.
 
 Use `--dry-run` to test tracking without MIDI. Hand labels are swapped by
 default for the current mirrored-camera setup; add `--no-swap-hands` if the
@@ -244,8 +305,10 @@ Extended fingertips are shown in green and folded fingertips in red. If a
 normally extended finger remains red, lower `--finger-angle` slightly (for
 example, to `125`); raise it if folded fingers are being shown as extended.
 The thumb also uses its distance from the palm. If a tucked thumb remains green,
-raise `--thumb-spread` from `0.55` to `0.65`; lower it if an open thumb remains
-red.
+raise `--thumb-spread`; lower it if an open thumb remains red. Lower
+`--max-horizontal-speed` if slow lateral movement does not raise tempo enough.
+Height reaches its full range between 0.25 and 0.75 of the camera image; tune
+those limits with `--height-top` and `--height-bottom`.
 
 ## Notes
 

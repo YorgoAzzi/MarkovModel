@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Code"))
 
 from realtime_engine import (
+    ACCOMPANIMENT_VOICES,
     ChordControl,
     MovementBiasedDurationSampler,
     RealtimeChoraleEngine,
@@ -18,15 +19,39 @@ from realtime_engine import (
 class ControlTests(unittest.TestCase):
     def test_controls_are_clamped_smoothed_and_accent_is_one_shot(self):
         controls = SmoothedControlState(smoothing=1.0)
-        controls.update(density=2.0, volume=-1.0, tilt=-2.0, rotation=0.5, accent=True)
+        controls.update(
+            density=2.0,
+            volume=-1.0,
+            tilt=-2.0,
+            rotation=0.5,
+            articulation=-1.0,
+            brightness=2.0,
+            accent=True,
+        )
         first = controls.advance()
         second = controls.advance()
         self.assertEqual(
             (first.density, first.volume, first.tilt, first.rotation),
             (1.0, 0.0, -1.0, 0.5),
         )
+        self.assertEqual((first.articulation, first.brightness), (0.0, 1.0))
         self.assertTrue(first.accent)
         self.assertFalse(second.accent)
+
+    def test_tempo_can_change_safely(self):
+        engine = RealtimeChoraleEngine.from_paths(
+            ROOT / "models/factorized_markov_model.npz",
+            ROOT / "models/chord_markov_model.npz",
+            ROOT / "dataChords",
+            ROOT / "cache/progression_blocks_cache.json",
+            tempo_bpm=60.0,
+            seed=9,
+        )
+        self.assertAlmostEqual(engine.tick_seconds, 0.25)
+        engine.update_tempo(120.0)
+        self.assertAlmostEqual(engine.tick_seconds, 0.125)
+        with self.assertRaises(ValueError):
+            engine.update_tempo(0)
 
 
 class EngineTests(unittest.TestCase):
@@ -65,6 +90,22 @@ class EngineTests(unittest.TestCase):
             self.assertLess(pitches["bass"], pitches["tenor"])
             self.assertLess(pitches["tenor"], pitches["alto"])
             self.assertLess(pitches["alto"], pitches["soprano"])
+
+    def test_accompaniment_mode_generates_exactly_three_ordered_voices(self):
+        engine = RealtimeChoraleEngine.from_paths(
+            ROOT / "models/factorized_markov_model.npz",
+            ROOT / "models/chord_markov_model.npz",
+            ROOT / "dataChords",
+            ROOT / "cache/progression_blocks_cache.json",
+            control_smoothing=1.0,
+            seed=41,
+        )
+        engine.set_generated_voices(ACCOMPANIMENT_VOICES)
+        frame = engine.generate_tick()
+        self.assertEqual(set(frame.pitches), set(ACCOMPANIMENT_VOICES))
+        self.assertEqual(frame.new_voices, frozenset(ACCOMPANIMENT_VOICES))
+        self.assertLess(frame.pitches["bass"], frame.pitches["tenor"])
+        self.assertLess(frame.pitches["tenor"], frame.pitches["alto"])
 
     def test_new_bar_realizes_the_new_chord(self):
         engine = RealtimeChoraleEngine.from_paths(
@@ -110,6 +151,44 @@ class EngineTests(unittest.TestCase):
         following = [engine.generate_tick() for _ in range(17)]
         next_note = next(frame for frame in following if frame.new_notes)
         self.assertLess(next_note.velocity, first.velocity)
+
+    def _gesture_run(self, *, tilt=0.0, activity=0.5, seed=31):
+        engine = RealtimeChoraleEngine.from_paths(
+            ROOT / "models/factorized_markov_model.npz",
+            ROOT / "models/chord_markov_model.npz",
+            ROOT / "dataChords",
+            ROOT / "cache/progression_blocks_cache.json",
+            control_smoothing=1.0,
+            seed=seed,
+        )
+        engine.update_chord_control(1, "major")
+        engine.update_controls(density=1.0, tilt=tilt, rotation=activity)
+        return [
+            frame.pitches
+            for frame in (engine.generate_tick() for _ in range(64))
+            if frame.new_notes
+        ]
+
+    def test_register_control_produces_clear_pitch_shift(self):
+        low = self._gesture_run(tilt=-1.0)
+        high = self._gesture_run(tilt=1.0)
+        low_average = sum(sum(chord.values()) for chord in low) / (4 * len(low))
+        high_average = sum(sum(chord.values()) for chord in high) / (4 * len(high))
+
+        self.assertGreater(high_average, low_average + 6.0)
+
+    def test_activity_control_produces_more_pitch_changes(self):
+        calm = self._gesture_run(activity=0.0, seed=37)
+        active = self._gesture_run(activity=1.0, seed=37)
+
+        def changed_voices(sonorities):
+            return sum(
+                current[voice] != previous[voice]
+                for previous, current in zip(sonorities, sonorities[1:])
+                for voice in current
+            )
+
+        self.assertGreater(changed_voices(active), changed_voices(calm))
 
     def test_performer_chord_is_applied_at_next_beat(self):
         engine = RealtimeChoraleEngine.from_paths(

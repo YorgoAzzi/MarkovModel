@@ -16,20 +16,50 @@ from realtime_engine import RealtimeChoraleEngine
 from realtime_performance import MidiPlayer, NullPlayer
 
 
-def _audio_loop(engine, player, stop_event, log_every):
+def _audio_loop(engine, player, stop_event, log_every, observers=()):
     deadline = time.perf_counter()
     generated = 0
+    active_observers = list(observers)
+    was_paused = False
     try:
         while not stop_event.is_set():
+            playing = getattr(engine, "is_playing", True)
+            if not playing:
+                if not was_paused:
+                    player.stop_all()
+                    was_paused = True
+                stop_event.wait(0.02)
+                deadline = time.perf_counter()
+                continue
+            if was_paused:
+                deadline = time.perf_counter()
+                was_paused = False
             started = time.perf_counter()
+            revision = getattr(engine, "revision", None)
             frame = engine.generate_tick()
             generation_ms = (time.perf_counter() - started) * 1000.0
+            if revision is not None and revision != engine.revision:
+                deadline = time.perf_counter()
+                continue
+            if not getattr(engine, "is_playing", True):
+                deadline = time.perf_counter()
+                continue
             player.render(frame)
+            for observer in active_observers.copy():
+                try:
+                    observer(frame)
+                except Exception as exc:
+                    # A visualizer must never interrupt MIDI timing.
+                    print(f"Realtime observer disabled by an error: {exc}")
+                    active_observers.remove(observer)
             if log_every > 0 and generated % log_every == 0:
                 controls = frame.controls
                 print(
                     f"audio tick={frame.tick_index:04d} generation={generation_ms:.1f}ms "
-                    f"density={controls.density:.2f} volume={controls.volume:.2f} "
+                    f"tempo={engine.tempo_bpm:.0f} density={controls.density:.2f} "
+                    f"volume={controls.volume:.2f} register={controls.tilt:+.2f} "
+                    f"activity={controls.rotation:.2f} articulation={controls.articulation:.2f} "
+                    f"brightness={controls.brightness:.2f} "
                     f"rhythm={frame.sampled_duration_beats:g}beat"
                 )
             generated += 1

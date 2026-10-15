@@ -17,6 +17,10 @@ from hand_movement import (
     chord_degree_for_fingers,
     chord_quality_for_tilt,
     extended_fingers,
+    finger_extension_amount,
+    hand_openness,
+    height_to_register,
+    is_pinching,
 )
 from hand_performance import parse_args
 
@@ -41,6 +45,12 @@ def hand_with_thumb(thumb_points):
     for index, point in zip((1, 2, 3, 4), thumb_points):
         points[index] = Point3D(*point)
     return HandObservation("Right", 1.0, tuple(points), tuple(points))
+
+
+def shifted_hand(hand, dx=0.0, dy=0.0):
+    points = tuple(Point3D(point.x + dx, point.y + dy, point.z) for point in hand.landmarks)
+    world = tuple(hand.world_landmarks)
+    return HandObservation(hand.handedness, hand.confidence, points, world)
 
 
 class GestureMappingTests(unittest.TestCase):
@@ -98,6 +108,20 @@ class GestureMappingTests(unittest.TestCase):
         )
         self.assertTrue(extended_fingers(open_thumb)[0])
         self.assertFalse(extended_fingers(tucked_thumb)[0])
+        self.assertGreater(hand_openness(open_thumb), hand_openness(tucked_thumb))
+
+    def test_index_extension_is_continuous_and_rotation_independent(self):
+        base = hand_with_direction(0.5, 0.5)
+        straight_points = list(base.landmarks)
+        for index, y in zip((5, 6, 7, 8), (0.60, 0.50, 0.40, 0.30)):
+            straight_points[index] = Point3D(0.42, y)
+        curled_points = list(straight_points)
+        curled_points[7] = Point3D(0.47, 0.52)
+        curled_points[8] = Point3D(0.42, 0.57)
+        straight = HandObservation("Right", 1.0, tuple(straight_points))
+        curled = HandObservation("Right", 1.0, tuple(curled_points))
+        self.assertGreater(finger_extension_amount(straight), 0.9)
+        self.assertLess(finger_extension_amount(curled), 0.5)
 
     def test_brief_missing_frame_does_not_restart_gesture_dwell(self):
         stabilizer = StableChordGesture(dwell_seconds=0.20, dropout_grace_seconds=0.12)
@@ -110,20 +134,40 @@ class GestureMappingTests(unittest.TestCase):
 
 
 class LeftHandTests(unittest.TestCase):
-    def test_height_controls_volume_and_left_tilt_controls_density(self):
+    def test_height_controls_activity_and_slow_horizontal_speed_controls_tempo(self):
         extractor = LeftHandControlExtractor(
-            max_left_tilt=45.0,
-            tilt_dead_zone=5.0,
-            tilt_time_constant=0.01,
+            min_tempo=60.0,
+            max_tempo=140.0,
+            max_horizontal_speed=0.20,
+            speed_dead_zone=0.005,
+            speed_time_constant=0.01,
         )
-        upright = extractor.update(hand_with_direction(0.5, 0.5), 0.0)
-        tilted_left = extractor.update(hand_with_direction(0.3, 0.65), 0.1)
-        tilted_right = extractor.update(hand_with_direction(0.7, 0.65), 0.2)
-        self.assertGreater(tilted_left.density, upright.density)
-        self.assertLess(tilted_right.density, tilted_left.density)
-        self.assertGreaterEqual(tilted_left.density, 0.0)
-        self.assertLessEqual(tilted_left.density, 1.0)
-        self.assertGreater(upright.volume, 0.0)
+        base_hand = hand_with_direction(0.5, 0.5)
+        stationary = extractor.update(base_hand, 0.0)
+        moving = extractor.update(shifted_hand(base_hand, dx=0.02), 0.1)
+        high = extractor.update(shifted_hand(base_hand, dx=0.02, dy=-0.25), 0.2)
+        self.assertEqual(stationary.tempo_bpm, 60.0)
+        self.assertGreater(moving.tempo_bpm, stationary.tempo_bpm)
+        self.assertGreater(high.melodic_activity, moving.melodic_activity)
+        self.assertGreaterEqual(moving.articulation, 0.0)
+        self.assertLessEqual(moving.articulation, 1.0)
+
+    def test_right_hand_height_maps_to_register(self):
+        self.assertEqual(height_to_register(0.25), 1.0)
+        self.assertEqual(height_to_register(0.50), 0.0)
+        self.assertEqual(height_to_register(0.75), -1.0)
+        self.assertAlmostEqual(height_to_register(0.35), 0.6)
+
+    def test_pinch_uses_thumb_index_distance_relative_to_palm(self):
+        base = hand_with_direction(0.5, 0.5)
+        def with_tip_distance(distance):
+            points = list(base.landmarks)
+            points[4] = Point3D(0.50, 0.40)
+            points[8] = Point3D(0.50 + distance, 0.40)
+            return HandObservation("Right", 1.0, tuple(points))
+
+        self.assertTrue(is_pinching(with_tip_distance(0.03), threshold=0.42))
+        self.assertFalse(is_pinching(with_tip_distance(0.20), threshold=0.42))
 
 
 if __name__ == "__main__":

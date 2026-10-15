@@ -33,30 +33,158 @@ class MidiPlayer:
             selected = names[0]
         self.port = mido.open_output(selected)
         self.active = {}
+        self.note_timers = {}
+        self.programs = {}
+        self.lock = threading.Lock()
         for channel in VOICE_CHANNELS.values():
             self.port.send(mido.Message("program_change", channel=channel, program=52))
+            self.programs[channel] = 52
         print(f"MIDI output: {selected}")
 
+    def _release(self, channel, pitch) -> None:
+        with self.lock:
+            if self.active.get(channel) != pitch:
+                return
+            self.port.send(
+                self.mido.Message("note_off", channel=channel, note=pitch, velocity=0)
+            )
+            self.active.pop(channel, None)
+            self.note_timers.pop(channel, None)
+
     def render(self, frame) -> None:
+        if not hasattr(self, "programs"):
+            self.programs = {}
+        with self.lock:
+            for voice, requested in getattr(frame, "voice_programs", {}).items():
+                if voice not in VOICE_CHANNELS:
+                    continue
+                channel = VOICE_CHANNELS[voice]
+                program = max(0, min(127, int(requested)))
+                if self.programs.get(channel) == program:
+                    continue
+                self.port.send(
+                    self.mido.Message(
+                        "program_change", channel=channel, program=program
+                    )
+                )
+                self.programs[channel] = program
         expression = max(1, min(127, int(10 + frame.controls.volume * 117)))
-        for channel in VOICE_CHANNELS.values():
-            self.port.send(self.mido.Message("control_change", channel=channel, control=11, value=expression))
+        brightness = max(0, min(127, int(round(frame.controls.brightness * 127))))
+        resonance = max(
+            0,
+            min(127, int(round(20 + frame.controls.brightness * 100))),
+        )
+        with self.lock:
+            for channel in VOICE_CHANNELS.values():
+                self.port.send(
+                    self.mido.Message(
+                        "control_change", channel=channel, control=11, value=expression
+                    )
+                )
+                self.port.send(
+                    self.mido.Message(
+                        "control_change", channel=channel, control=74, value=brightness
+                    )
+                )
+                self.port.send(
+                    self.mido.Message(
+                        "control_change", channel=channel, control=71, value=resonance
+                    )
+                )
+        released_voices = set(getattr(frame, "released_voices", ()))
+        sustained_voices = set(getattr(frame, "sustained_voices", ()))
+        # A held voice has no scheduled note-off. The next onset or explicit
+        # release still stops it immediately, so movement remains responsive.
+        for voice in sustained_voices:
+            channel = VOICE_CHANNELS.get(voice)
+            if channel is None:
+                continue
+            with self.lock:
+                timer = self.note_timers.pop(channel, None)
+                if timer is not None:
+                    timer.cancel()
+        for voice in released_voices:
+            channel = VOICE_CHANNELS.get(voice)
+            if channel is None:
+                continue
+            with self.lock:
+                timer = self.note_timers.pop(channel, None)
+                if timer is not None:
+                    timer.cancel()
+                old_pitch = self.active.pop(channel, None)
+                if old_pitch is not None:
+                    self.port.send(
+                        self.mido.Message(
+                            "note_off", channel=channel, note=old_pitch, velocity=0
+                        )
+                    )
+
         if not frame.new_notes:
             return
-        for voice, channel in VOICE_CHANNELS.items():
-            old_pitch = self.active.get(channel)
-            if old_pitch is not None:
-                self.port.send(self.mido.Message("note_off", channel=channel, note=old_pitch, velocity=0))
-            pitch = int(frame.pitches[voice])
-            self.port.send(
-                self.mido.Message("note_on", channel=channel, note=pitch, velocity=frame.velocity)
+        gate_ratio = 0.20 + 0.78 * frame.controls.articulation
+        new_voices = set(
+            getattr(
+                frame,
+                "new_voices",
+                frame.pitches.keys() if frame.new_notes else (),
             )
-            self.active[channel] = pitch
+        )
+        if not new_voices and frame.new_notes and not hasattr(frame, "new_voices"):
+            new_voices = set(frame.pitches)
+        durations = getattr(frame, "voice_duration_ticks", {})
+        for voice in new_voices:
+            if voice not in frame.pitches or voice not in VOICE_CHANNELS:
+                continue
+            channel = VOICE_CHANNELS[voice]
+            duration_ticks = int(durations.get(voice, frame.planned_duration_ticks))
+            note_duration = duration_ticks * frame.duration_seconds
+            gate_seconds = max(0.025, note_duration * gate_ratio)
+            with self.lock:
+                timer = self.note_timers.pop(channel, None)
+                if timer is not None:
+                    timer.cancel()
+                old_pitch = self.active.get(channel)
+                if old_pitch is not None:
+                    self.port.send(
+                        self.mido.Message(
+                            "note_off", channel=channel, note=old_pitch, velocity=0
+                        )
+                    )
+                pitch = int(frame.pitches[voice])
+                self.port.send(
+                    self.mido.Message(
+                        "note_on", channel=channel, note=pitch, velocity=frame.velocity
+                    )
+                )
+                self.active[channel] = pitch
+                if voice not in sustained_voices:
+                    timer = threading.Timer(
+                        gate_seconds,
+                        self._release,
+                        args=(channel, pitch),
+                    )
+                    timer.daemon = True
+                    self.note_timers[channel] = timer
+                    timer.start()
+
+    def stop_all(self) -> None:
+        """Immediately silence every channel without closing the MIDI port."""
+        with self.lock:
+            for timer in self.note_timers.values():
+                timer.cancel()
+            self.note_timers.clear()
+            for channel, pitch in list(self.active.items()):
+                self.port.send(
+                    self.mido.Message(
+                        "note_off", channel=channel, note=pitch, velocity=0
+                    )
+                )
+            self.active.clear()
 
     def close(self) -> None:
-        for channel, pitch in self.active.items():
-            self.port.send(self.mido.Message("note_off", channel=channel, note=pitch, velocity=0))
-        self.port.close()
+        self.stop_all()
+        with self.lock:
+            self.port.close()
 
 
 class NullPlayer:
@@ -64,6 +192,9 @@ class NullPlayer:
         return
 
     def close(self) -> None:
+        return
+
+    def stop_all(self) -> None:
         return
 
 
@@ -86,7 +217,9 @@ def _apply_command(engine, text, stop_event):
     elif command == "accent":
         engine.update_controls(accent=True)
         print("Queued accent for the next note attack.")
-    elif command in {"density", "volume", "tilt", "rotation"} and len(parts) == 2:
+    elif command in {
+        "density", "volume", "tilt", "rotation", "articulation", "brightness"
+    } and len(parts) == 2:
         engine.update_controls(**{command: float(parts[1])})
         target = engine.controls.target()
         print(f"Set {command} target to {getattr(target, command):.2f}.")
@@ -115,6 +248,7 @@ def _apply_command(engine, text, stop_event):
 def print_help():
     print("Commands can be entered while music continues:")
     print("  density 0..1 | volume 0..1 | tilt -1..1 | rotation 0..1 | accent")
+    print("  articulation 0..1 | brightness 0..1")
     print("  controls <density> <volume> <tilt> <rotation>")
     print("  key <C/G/F#...> | mode <mode> | status | help | quit")
 

@@ -59,11 +59,12 @@ class HandTrackingResult:
 @dataclass(frozen=True)
 class LeftHandControls:
     detected: bool
-    volume: float
-    density: float
+    melodic_activity: float
+    tempo_bpm: float
+    articulation: float
     palm_x: float
     palm_y: float
-    tilt_degrees: float
+    horizontal_speed: float
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,28 @@ def palm_center(hand: HandObservation) -> tuple[float, float]:
         sum(point.x for point in points) / len(points),
         sum(point.y for point in points) / len(points),
     )
+
+
+def palm_width(hand: HandObservation) -> float:
+    """Apparent palm width in normalized image coordinates (a depth proxy)."""
+    index_knuckle = hand.landmarks[5]
+    pinky_knuckle = hand.landmarks[17]
+    return math.hypot(
+        index_knuckle.x - pinky_knuckle.x,
+        index_knuckle.y - pinky_knuckle.y,
+    )
+
+
+def height_to_unit(y: float, top: float = 0.25, bottom: float = 0.75) -> float:
+    """Map image height to 0..1, with the top of the frame producing 1."""
+    if bottom <= top:
+        raise ValueError("bottom must be greater than top")
+    return _clamp((bottom - float(y)) / (bottom - top), 0.0, 1.0)
+
+
+def height_to_register(y: float, top: float = 0.25, bottom: float = 0.75) -> float:
+    """Map image height to the engine register range -1..1."""
+    return 2.0 * height_to_unit(y, top, bottom) - 1.0
 
 
 def hand_tilt_degrees(hand: HandObservation) -> float:
@@ -104,6 +127,75 @@ def _joint_angle(a: Point3D, joint: Point3D, c: Point3D) -> float:
         return 0.0
     cosine = _clamp(float(np.dot(first, second)) / denominator, -1.0, 1.0)
     return math.degrees(math.acos(cosine))
+
+
+def hand_openness(hand: HandObservation) -> float:
+    """Estimate continuous hand openness from rotation-independent finger shape."""
+    points: Sequence[Point3D] = hand.world_landmarks or hand.landmarks
+    if len(points) != 21:
+        raise ValueError("A hand observation must contain 21 landmarks")
+
+    palm_span = max(1e-9, _distance(points[5], points[17]))
+    thumb_path = sum(_distance(points[a], points[b]) for a, b in ((1, 2), (2, 3), (3, 4)))
+    thumb_straightness = _distance(points[1], points[4]) / max(1e-9, thumb_path)
+    palm_points = [points[index] for index in (0, 5, 9, 13, 17)]
+    center = Point3D(
+        sum(point.x for point in palm_points) / len(palm_points),
+        sum(point.y for point in palm_points) / len(palm_points),
+        sum(point.z for point in palm_points) / len(palm_points),
+    )
+    thumb_spread = _distance(points[4], center) / palm_span
+    amounts = [
+        0.45 * _clamp((thumb_straightness - 0.55) / 0.35, 0.0, 1.0)
+        + 0.55 * _clamp((thumb_spread - 0.30) / 0.75, 0.0, 1.0)
+    ]
+    for mcp, pip, dip, tip in (
+        (5, 6, 7, 8),
+        (9, 10, 11, 12),
+        (13, 14, 15, 16),
+        (17, 18, 19, 20),
+    ):
+        path = (
+            _distance(points[mcp], points[pip])
+            + _distance(points[pip], points[dip])
+            + _distance(points[dip], points[tip])
+        )
+        straightness = _distance(points[mcp], points[tip]) / max(1e-9, path)
+        amounts.append(_clamp((straightness - 0.55) / 0.35, 0.0, 1.0))
+    return float(sum(amounts) / len(amounts))
+
+
+def finger_extension_amount(hand: HandObservation, finger: str = "index") -> float:
+    """Return a continuous 0..1 extension value for a non-thumb finger."""
+    joints = {
+        "index": (5, 6, 7, 8),
+        "middle": (9, 10, 11, 12),
+        "ring": (13, 14, 15, 16),
+        "pinky": (17, 18, 19, 20),
+    }
+    name = str(finger).strip().lower()
+    if name not in joints:
+        raise ValueError("finger must be index, middle, ring, or pinky")
+    points: Sequence[Point3D] = hand.world_landmarks or hand.landmarks
+    if len(points) != 21:
+        raise ValueError("A hand observation must contain 21 landmarks")
+    mcp, pip, dip, tip = joints[name]
+    path = (
+        _distance(points[mcp], points[pip])
+        + _distance(points[pip], points[dip])
+        + _distance(points[dip], points[tip])
+    )
+    straightness = _distance(points[mcp], points[tip]) / max(1e-9, path)
+    return _clamp((straightness - 0.55) / 0.35, 0.0, 1.0)
+
+
+def is_pinching(hand: HandObservation, threshold: float = 0.42) -> bool:
+    """Return whether the thumb and index fingertips form a scale-independent pinch."""
+    points: Sequence[Point3D] = hand.world_landmarks or hand.landmarks
+    if len(points) != 21:
+        raise ValueError("A hand observation must contain 21 landmarks")
+    span = max(1e-9, _distance(points[5], points[17]))
+    return _distance(points[4], points[8]) / span <= max(0.05, float(threshold))
 
 
 def extended_fingers(
@@ -279,94 +371,110 @@ def recognize_chord_gesture(
 
 
 class LeftHandControlExtractor:
-    """Map palm height to volume and leftward hand tilt to density."""
+    """Extract vertical position, tempo, and articulation from the left hand."""
 
     def __init__(
         self,
         *,
-        max_left_tilt: float = 45.0,
-        tilt_dead_zone: float = 5.0,
-        tilt_time_constant: float = 0.08,
+        min_tempo: float = 60.0,
+        max_tempo: float = 140.0,
+        max_horizontal_speed: float = 0.20,
+        speed_dead_zone: float = 0.01,
+        speed_time_constant: float = 0.15,
+        activity_top: float = 0.25,
+        activity_bottom: float = 0.75,
         dropout_decay_seconds: float = 0.20,
         dropout_reset_seconds: float = 0.40,
     ):
-        if max_left_tilt <= tilt_dead_zone:
-            raise ValueError("max_left_tilt must exceed the dead zone")
-        self.max_left_tilt = float(max_left_tilt)
-        self.tilt_dead_zone = float(tilt_dead_zone)
-        self.tilt_time_constant = max(1e-6, float(tilt_time_constant))
+        if min_tempo <= 0 or max_tempo <= min_tempo:
+            raise ValueError("Tempo range must be positive and increasing")
+        if max_horizontal_speed <= speed_dead_zone:
+            raise ValueError("max_horizontal_speed must exceed the dead zone")
+        if activity_bottom <= activity_top:
+            raise ValueError("activity_bottom must exceed activity_top")
+        self.min_tempo = float(min_tempo)
+        self.max_tempo = float(max_tempo)
+        self.max_horizontal_speed = float(max_horizontal_speed)
+        self.speed_dead_zone = float(speed_dead_zone)
+        self.speed_time_constant = max(1e-6, float(speed_time_constant))
+        self.activity_top = float(activity_top)
+        self.activity_bottom = float(activity_bottom)
         self.dropout_decay_seconds = max(1e-6, float(dropout_decay_seconds))
         self.dropout_reset_seconds = max(0.0, float(dropout_reset_seconds))
         self._last_timestamp: Optional[float] = None
         self._last_seen_timestamp: Optional[float] = None
-        self._filtered_tilt: Optional[float] = None
-        self._volume = 0.7
+        self._last_x: Optional[float] = None
+        self._horizontal_speed = 0.0
+        self._melodic_activity = 0.5
+        self._articulation = 0.9
         self._palm_x = 0.5
-        self._palm_y = 0.3
+        self._palm_y = 0.5
 
-    @staticmethod
-    def _angle_delta(current: float, previous: float) -> float:
-        return (current - previous + 180.0) % 360.0 - 180.0
-
-    def _density_for_tilt(self, tilt: float) -> float:
-        left_tilt = max(0.0, -float(tilt))
-        return _clamp(
-            (left_tilt - self.tilt_dead_zone)
-            / (self.max_left_tilt - self.tilt_dead_zone),
+    def _tempo_for_speed(self, speed: float) -> float:
+        normalized = _clamp(
+            (float(speed) - self.speed_dead_zone)
+            / (self.max_horizontal_speed - self.speed_dead_zone),
             0.0,
             1.0,
         )
+        return self.min_tempo + normalized * (self.max_tempo - self.min_tempo)
 
     def update(self, hand: HandObservation, timestamp: float) -> LeftHandControls:
         timestamp = float(timestamp)
         x, y = palm_center(hand)
-        raw_tilt = hand_tilt_degrees(hand)
-        if self._last_timestamp is None or self._filtered_tilt is None:
-            self._filtered_tilt = raw_tilt
+        if self._last_timestamp is None or self._last_x is None:
+            self._horizontal_speed = 0.0
         else:
             dt = max(1e-4, timestamp - self._last_timestamp)
-            alpha = 1.0 - math.exp(-dt / self.tilt_time_constant)
-            self._filtered_tilt += alpha * self._angle_delta(
-                raw_tilt,
-                self._filtered_tilt,
-            )
+            if dt > self.dropout_reset_seconds:
+                self._horizontal_speed = 0.0
+            else:
+                raw_speed = abs(x - self._last_x) / dt
+                alpha = 1.0 - math.exp(-dt / self.speed_time_constant)
+                self._horizontal_speed += alpha * (
+                    raw_speed - self._horizontal_speed
+                )
 
-        density = self._density_for_tilt(self._filtered_tilt)
         self._last_timestamp = timestamp
         self._last_seen_timestamp = timestamp
+        self._last_x = x
         self._palm_x, self._palm_y = x, y
-        self._volume = 1.0 - _clamp(y, 0.0, 1.0)
+        self._melodic_activity = height_to_unit(
+            y,
+            self.activity_top,
+            self.activity_bottom,
+        )
+        self._articulation = hand_openness(hand)
         return LeftHandControls(
             detected=True,
-            volume=self._volume,
-            density=density,
+            melodic_activity=self._melodic_activity,
+            tempo_bpm=self._tempo_for_speed(self._horizontal_speed),
+            articulation=self._articulation,
             palm_x=x,
             palm_y=y,
-            tilt_degrees=self._filtered_tilt,
+            horizontal_speed=self._horizontal_speed,
         )
 
     def missing(self, timestamp: float) -> LeftHandControls:
         timestamp = float(timestamp)
         dt = 0.0 if self._last_timestamp is None else max(0.0, timestamp - self._last_timestamp)
-        if self._filtered_tilt is not None:
-            self._filtered_tilt *= math.exp(-dt / self.dropout_decay_seconds)
+        self._horizontal_speed *= math.exp(-dt / self.dropout_decay_seconds)
         missing_for = (
             0.0
             if self._last_seen_timestamp is None
             else max(0.0, timestamp - self._last_seen_timestamp)
         )
         if missing_for > self.dropout_reset_seconds:
-            self._filtered_tilt = None
+            self._last_x = None
         self._last_timestamp = timestamp
-        displayed_tilt = self._filtered_tilt or 0.0
-        density = self._density_for_tilt(displayed_tilt)
         return LeftHandControls(
             detected=False,
-            volume=self._volume,
-            density=density,
+            melodic_activity=self._melodic_activity,
+            tempo_bpm=self._tempo_for_speed(self._horizontal_speed),
+            articulation=self._articulation,
             palm_x=self._palm_x,
             palm_y=self._palm_y,
-            tilt_degrees=displayed_tilt,
+            horizontal_speed=self._horizontal_speed,
         )
 
 
@@ -448,6 +556,11 @@ class MediaPipeHandTracker:
         try:
             import mediapipe as mp
         except ImportError as exc:
+            if "tensorflow" in str(exc).lower() or "_pywrap_tensorflow" in repr(exc).lower():
+                raise RuntimeError(
+                    "MediaPipe could not start because an unused TensorFlow installation "
+                    "failed to load. Remove it with: python -m pip uninstall tensorflow"
+                ) from exc
             raise RuntimeError(
                 "MediaPipe is required. Run: pip install -r requirements.txt"
             ) from exc

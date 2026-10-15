@@ -7,7 +7,8 @@ the caller asks for one clock tick whenever its scheduler is ready.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import combinations
 from pathlib import Path
 from threading import Lock
 from typing import Optional
@@ -28,6 +29,8 @@ class MovementControls:
     volume: float = 0.7  # 0..1: quiet to loud MIDI dynamics
     tilt: float = 0.0  # -1..1: low to high register
     rotation: float = 0.0  # 0..1: narrow to wide melodic motion
+    articulation: float = 0.9  # 0..1: short/staccato to sustained/legato
+    brightness: float = 0.5  # 0..1: dark to bright MIDI timbre
     accent: bool = False  # one-shot velocity accent
 
 
@@ -44,6 +47,11 @@ class GeneratedTick:
     velocity: int
     sampled_duration_beats: float
     planned_duration_ticks: int
+    new_voices: frozenset[str] = frozenset()
+    released_voices: frozenset[str] = frozenset()
+    sustained_voices: frozenset[str] = frozenset()
+    voice_duration_ticks: dict[str, int] = field(default_factory=dict)
+    voice_programs: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -56,6 +64,103 @@ class ChordControl:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
+
+
+ACCOMPANIMENT_VOICES = ("bass", "tenor", "alto")
+
+
+def _partial_sonority_cost(
+    previous,
+    current,
+    targets,
+    voices,
+    repeat_streaks,
+    repeated_note_base_penalty,
+) -> float:
+    """Voice-leading cost for a generated subset such as bass/tenor/alto."""
+    score = 0.0
+    for voice in voices:
+        pitch = int(current[voice])
+        score += 0.18 * abs(pitch - int(targets[voice]))
+        if previous is None:
+            continue
+        leap = abs(pitch - int(previous[voice]))
+        jump_limit = int(core.VOICE_MAX_JUMP[voice])
+        if leap > jump_limit:
+            score += 1.3 * (leap - jump_limit)
+        if leap > 12:
+            score += 2.0 * (leap - 12)
+        if voice != "bass" and leap > 5:
+            score += 0.8 * (leap - 5)
+        if pitch == int(previous[voice]):
+            streak = int(repeat_streaks.get(voice, 0))
+            score += repeated_note_base_penalty + (
+                core.CHORALE_REPEAT_NOTE_STREAK_PENALTY * streak
+            )
+
+    if previous is not None:
+        for first, second in combinations(voices, 2):
+            perfect = core._parallel_perfect_type(
+                int(previous[first]),
+                int(previous[second]),
+                int(current[first]),
+                int(current[second]),
+            )
+            if perfect == "octave":
+                score += 8.0
+            elif perfect == "fifth":
+                score += 6.5
+    return float(score)
+
+
+def _enumerate_accompaniment_candidates(
+    candidates,
+    previous,
+    targets,
+    limit,
+    repeat_streaks,
+    repeated_note_base_penalty,
+):
+    """Enumerate ordered bass/tenor/alto sonorities without a hidden soprano."""
+    scored = []
+    for bass in candidates["bass"]:
+        for tenor in candidates["tenor"]:
+            if not bass < tenor <= bass + 19:
+                continue
+            for alto in candidates["alto"]:
+                if not tenor < alto <= tenor + 12:
+                    continue
+                sonority = {"bass": int(bass), "tenor": int(tenor), "alto": int(alto)}
+                cost = _partial_sonority_cost(
+                    previous,
+                    sonority,
+                    targets,
+                    ACCOMPANIMENT_VOICES,
+                    repeat_streaks,
+                    repeated_note_base_penalty,
+                )
+                scored.append((cost, sonority))
+    if not scored:
+        for bass in candidates["bass"]:
+            for tenor in candidates["tenor"]:
+                for alto in candidates["alto"]:
+                    if bass < tenor < alto:
+                        sonority = {
+                            "bass": int(bass),
+                            "tenor": int(tenor),
+                            "alto": int(alto),
+                        }
+                        cost = _partial_sonority_cost(
+                            previous,
+                            sonority,
+                            targets,
+                            ACCOMPANIMENT_VOICES,
+                            repeat_streaks,
+                            repeated_note_base_penalty,
+                        )
+                        scored.append((cost, sonority))
+    scored.sort(key=lambda item: item[0])
+    return [(sonority, cost) for cost, sonority in scored[: max(1, int(limit))]]
 
 
 def chord_token_for_control(
@@ -112,6 +217,8 @@ class SmoothedControlState:
         volume: Optional[float] = None,
         tilt: Optional[float] = None,
         rotation: Optional[float] = None,
+        articulation: Optional[float] = None,
+        brightness: Optional[float] = None,
         accent: bool = False,
     ) -> None:
         with self._lock:
@@ -120,6 +227,16 @@ class SmoothedControlState:
                 volume=self._target.volume if volume is None else _clamp(volume, 0.0, 1.0),
                 tilt=self._target.tilt if tilt is None else _clamp(tilt, -1.0, 1.0),
                 rotation=self._target.rotation if rotation is None else _clamp(rotation, 0.0, 1.0),
+                articulation=(
+                    self._target.articulation
+                    if articulation is None
+                    else _clamp(articulation, 0.0, 1.0)
+                ),
+                brightness=(
+                    self._target.brightness
+                    if brightness is None
+                    else _clamp(brightness, 0.0, 1.0)
+                ),
             )
             self._accent_pending = self._accent_pending or bool(accent)
 
@@ -133,6 +250,12 @@ class SmoothedControlState:
                 volume=current.volume + alpha * (target.volume - current.volume),
                 tilt=current.tilt + alpha * (target.tilt - current.tilt),
                 rotation=current.rotation + alpha * (target.rotation - current.rotation),
+                articulation=current.articulation + alpha * (
+                    target.articulation - current.articulation
+                ),
+                brightness=current.brightness + alpha * (
+                    target.brightness - current.brightness
+                ),
                 accent=self._accent_pending,
             )
             self._accent_pending = False
@@ -304,7 +427,8 @@ class RealtimeChoraleEngine:
 
         self.melody_model = melody_model
         self.chord_model = chord_model
-        self.tempo_bpm = float(tempo_bpm)
+        self._tempo_lock = Lock()
+        self._tempo_bpm = float(tempo_bpm)
         self.beats_per_bar = int(beats_per_bar)
         self.ticks_per_beat = int(ticks_per_beat)
         self.ticks_per_bar = self.beats_per_bar * self.ticks_per_beat
@@ -325,7 +449,8 @@ class RealtimeChoraleEngine:
             melody_model.duration_model,
             bias_strength=duration_bias_strength,
         )
-        self.beams = [core._default_chorale_beam()]
+        self.generated_voices = tuple(core.VOICE_ORDER)
+        self.beams = [self._default_beam()]
         self.tick_index = 0
         self.note_index = 0
         self.current_chord = None
@@ -356,10 +481,51 @@ class RealtimeChoraleEngine:
 
     @property
     def tick_seconds(self) -> float:
-        return 60.0 / self.tempo_bpm / self.ticks_per_beat
+        with self._tempo_lock:
+            tempo_bpm = self._tempo_bpm
+        return 60.0 / tempo_bpm / self.ticks_per_beat
+
+    @property
+    def tempo_bpm(self) -> float:
+        with self._tempo_lock:
+            return self._tempo_bpm
+
+    def update_tempo(self, tempo_bpm: float) -> None:
+        tempo_bpm = float(tempo_bpm)
+        if tempo_bpm <= 0:
+            raise ValueError("tempo_bpm must be positive")
+        with self._tempo_lock:
+            self._tempo_bpm = tempo_bpm
 
     def update_controls(self, **values) -> None:
         self.controls.update(**values)
+
+    def _default_beam(self):
+        centers = {
+            voice: (core.VOICE_RANGES[voice][0] + core.VOICE_RANGES[voice][1]) // 2
+            for voice in self.generated_voices
+        }
+        return {
+            "score": 0.0,
+            "last": None,
+            "targets": centers,
+            "repeat_streaks": {voice: 0 for voice in self.generated_voices},
+        }
+
+    def set_generated_voices(self, voices) -> None:
+        """Switch between complete SATB and genuine three-voice accompaniment."""
+        selected = tuple(voice for voice in core.VOICE_ORDER if voice in set(voices))
+        allowed = {tuple(core.VOICE_ORDER), ACCOMPANIMENT_VOICES}
+        if selected not in allowed:
+            raise ValueError("Generated voices must be SATB or bass/tenor/alto")
+        if selected == self.generated_voices:
+            return
+        self.generated_voices = selected
+        self.beams = [self._default_beam()]
+        self.interval_pairs = core._init_interval_pairs(self.melody_model)
+        self.current_sonority = None
+        self.ticks_since_note = 0
+        self.note_index = 0
 
     def update_chord_control(self, degree: int, quality: str = "diatonic") -> None:
         """Request a performer chord; it is applied at the next beat boundary."""
@@ -369,10 +535,15 @@ class RealtimeChoraleEngine:
         with self._chord_control_lock:
             self._requested_chord_control = control
 
-    def clear_chord_control(self) -> None:
-        """Return harmony to the learned progression at the next bar boundary."""
+    def clear_chord_control(self, *, immediate: bool = False) -> None:
+        """Return harmony to the learned progression, optionally on the next tick."""
         with self._chord_control_lock:
             self._requested_chord_control = None
+        if immediate:
+            self._applied_chord_control = None
+            self.current_chord = None
+            self.current_sonority = None
+            self.ticks_since_note = 0
 
     def chord_control_target(self) -> Optional[ChordControl]:
         with self._chord_control_lock:
@@ -404,11 +575,13 @@ class RealtimeChoraleEngine:
     def _generate_sonority(self, controls: MovementControls) -> dict[str, int]:
         interval_deltas = {}
         if self.note_index > 0:
-            for voice in core.VOICE_ORDER:
+            for voice in self.generated_voices:
                 delta = core._consume_interval_delta(
                     self.melody_model, self.interval_pairs, voice
                 )
-                activity = 0.55 + 1.45 * controls.rotation
+                # Low activity suppresses most learned movement; high activity
+                # exaggerates it while the SATB constraints still limit leaps.
+                activity = 0.20 + 2.60 * controls.rotation
                 interval_deltas[voice] = int(round(delta * activity))
 
         chord_classes = core._chord_token_to_pitch_classes(
@@ -418,19 +591,24 @@ class RealtimeChoraleEngine:
             voice: (bounds[0] + bounds[1]) // 2
             for voice, bounds in core.VOICE_RANGES.items()
         }
-        register_scale = {"bass": 5, "tenor": 7, "alto": 9, "soprano": 12}
         expanded = []
 
         for beam in self.beams:
             previous = beam["last"]
             targets = dict(beam["targets"])
-            for voice in core.VOICE_ORDER:
+            for voice in self.generated_voices:
                 moving_target = targets[voice] + interval_deltas.get(voice, 0)
-                register_target = centers[voice] + round(register_scale[voice] * controls.tilt)
-                targets[voice] = int(round(0.72 * moving_target + 0.28 * register_target))
+                low, high = core.VOICE_RANGES[voice]
+                register_span = max(1, (high - low) // 2 - 2)
+                register_target = centers[voice] + round(
+                    register_span * controls.tilt
+                )
+                targets[voice] = int(
+                    round(0.40 * moving_target + 0.60 * register_target)
+                )
 
             candidates = {}
-            for voice in core.VOICE_ORDER:
+            for voice in self.generated_voices:
                 previous_pitch = None if previous is None else int(previous[voice])
                 candidates[voice] = core._build_ranked_voice_candidates(
                     chord_classes,
@@ -440,18 +618,32 @@ class RealtimeChoraleEngine:
                     self.candidates_per_voice,
                 )
 
-            repeat_penalty = self.repeat_note_penalty * (1.0 - 0.6 * controls.rotation)
-            choices = core._enumerate_sonority_candidates(
-                candidates,
-                previous,
-                targets,
-                self.top_sonorities,
-                repeat_streaks=beam["repeat_streaks"],
-                repeated_note_base_penalty=repeat_penalty,
+            # Calm gestures permit held/repeated pitches; active gestures make
+            # repetition increasingly expensive.
+            repeat_penalty = self.repeat_note_penalty * (
+                0.15 + 1.35 * controls.rotation
             )
+            if self.generated_voices == tuple(core.VOICE_ORDER):
+                choices = core._enumerate_sonority_candidates(
+                    candidates,
+                    previous,
+                    targets,
+                    self.top_sonorities,
+                    repeat_streaks=beam["repeat_streaks"],
+                    repeated_note_base_penalty=repeat_penalty,
+                )
+            else:
+                choices = _enumerate_accompaniment_candidates(
+                    candidates,
+                    previous,
+                    targets,
+                    self.top_sonorities,
+                    beam["repeat_streaks"],
+                    repeat_penalty,
+                )
             for sonority, local_cost in choices:
                 streaks = {}
-                for voice in core.VOICE_ORDER:
+                for voice in self.generated_voices:
                     repeated = previous is not None and sonority[voice] == previous[voice]
                     streaks[voice] = beam["repeat_streaks"][voice] + 1 if repeated else 0
                 expanded.append(
@@ -464,7 +656,7 @@ class RealtimeChoraleEngine:
                 )
 
         if not expanded:
-            raise RuntimeError("Realtime generation could not find a valid SATB sonority")
+            raise RuntimeError("Realtime generation could not find a valid sonority")
         expanded.sort(key=lambda item: item["score"])
         best_score = expanded[0]["score"]
         # Removing the shared accumulated cost avoids unbounded numbers in long sessions.
@@ -552,6 +744,17 @@ class RealtimeChoraleEngine:
             velocity=max(1, min(127, velocity)),
             sampled_duration_beats=self.sampled_duration_beats,
             planned_duration_ticks=self.planned_duration_ticks,
+            new_voices=(
+                frozenset(self.generated_voices) if new_notes else frozenset()
+            ),
+            voice_duration_ticks=(
+                {
+                    voice: self.planned_duration_ticks
+                    for voice in self.generated_voices
+                }
+                if new_notes
+                else {}
+            ),
         )
         self.tick_index += 1
         return result
