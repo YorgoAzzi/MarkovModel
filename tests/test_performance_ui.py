@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Code"))
 
 from PyQt5 import QtWidgets
+from magenta_protocol import INPUT_ALL
 from performance_session import MODE_SOPRANO
 from performance_ui import IntegratedPerformanceWindow, qt_compatible_svg
 
@@ -26,6 +27,11 @@ class IntegratedWindowTests(unittest.TestCase):
         try:
             window.set_camera_frame(np.zeros((120, 160, 3), dtype=np.uint8))
             window.set_state(mode=MODE_SOPRANO, playing=False, summary="test")
+            window.set_magenta_state(
+                enabled=True,
+                input_mode=INPUT_ALL,
+                status="Connected (mock)",
+            )
             window.update_score(
                 {
                     "status": "Measure 1",
@@ -42,6 +48,9 @@ class IntegratedWindowTests(unittest.TestCase):
             self.assertIn("Play", window.transport_button.text())
             self.assertEqual(window.score_status.text(), "Measure 1")
             self.assertEqual(len(window._score_labels), 1)
+            self.assertTrue(window.magenta_button.isChecked())
+            self.assertEqual(window.magenta_input.currentData(), INPUT_ALL)
+            self.assertEqual(window.magenta_status.text(), "Connected (mock)")
         finally:
             window.close()
 

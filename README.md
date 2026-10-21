@@ -297,6 +297,34 @@ SVG. The Qt interface renders those SVG pages directly inside the application.
 Use `--score-bars 6` to show six measures in each score section or
 `--no-live-score` to hide the score panel.
 
+### Magenta RealTime accompaniment
+
+The hand interface can send either the soprano or the complete SATB output to
+Magenta RealTime 2 as a 25 Hz MIDI-conditioning stream. The camera application
+and Magenta run on the same computer as separate processes. A local-only
+gateway keeps model inference away from the hand-tracking and music threads.
+
+Test the complete connection without Magenta hardware by starting the mock
+gateway first:
+
+```bash
+python "Code/magenta_host.py" --backend mock
+python "Code/hand_performance.py" --dry-run --magenta
+```
+
+On a compatible Apple Silicon computer, start the official MRT2 standalone app
+and load a model. Its virtual `Magenta RT Input` port is connected with:
+
+```bash
+python "Code/magenta_host.py" --backend midi
+python "Code/hand_performance.py" --magenta
+```
+
+The integrated UI provides **Magenta On/Off** and **Soprano only / All four
+voices** controls plus connection status. The existing MIDI performance and
+live score continue if the gateway is unavailable. See `Code/MAGENTA.md` for
+the architecture and setup details.
+
 Use `--dry-run` to test tracking without MIDI. Hand labels are swapped by
 default for the current mirrored-camera setup; add `--no-swap-hands` if the
 physical hands are already labeled correctly. Chord gestures must remain

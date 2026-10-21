@@ -18,6 +18,11 @@ try:
 except ModuleNotFoundError:
     from .performance_session import MODE_FULL, MODE_SOPRANO
 
+try:
+    from magenta_protocol import INPUT_ALL, INPUT_SOPRANO
+except ModuleNotFoundError:
+    from .magenta_protocol import INPUT_ALL, INPUT_SOPRANO
+
 
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -98,6 +103,8 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     mode_requested = QtCore.pyqtSignal(str)
     transport_requested = QtCore.pyqtSignal()
+    magenta_enabled_requested = QtCore.pyqtSignal(bool)
+    magenta_input_requested = QtCore.pyqtSignal(str)
     close_requested = QtCore.pyqtSignal()
 
     def __init__(self, *, show_score: bool = True):
@@ -152,6 +159,21 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         buttons.addWidget(self.soprano_button)
         buttons.addWidget(self.transport_button)
         camera_layout.addLayout(buttons)
+
+        magenta_controls = QtWidgets.QHBoxLayout()
+        self.magenta_button = QtWidgets.QPushButton("Magenta Off")
+        self.magenta_button.setCheckable(True)
+        self.magenta_input = QtWidgets.QComboBox()
+        self.magenta_input.addItem("Soprano only", INPUT_SOPRANO)
+        self.magenta_input.addItem("All four voices", INPUT_ALL)
+        self.magenta_status = QtWidgets.QLabel("Off")
+        self.magenta_status.setWordWrap(True)
+        self.magenta_status.setStyleSheet("color:#60727d;padding:3px;")
+        magenta_controls.addWidget(self.magenta_button)
+        magenta_controls.addWidget(QtWidgets.QLabel("Input to Magenta:"))
+        magenta_controls.addWidget(self.magenta_input)
+        magenta_controls.addWidget(self.magenta_status, 1)
+        camera_layout.addLayout(magenta_controls)
         self.summary_label = QtWidgets.QLabel("Initializing performance...")
         self.summary_label.setWordWrap(True)
         self.summary_label.setStyleSheet("color:#44515a;padding:5px;")
@@ -195,6 +217,12 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             lambda: self.mode_requested.emit(MODE_SOPRANO)
         )
         self.transport_button.clicked.connect(self.transport_requested.emit)
+        self.magenta_button.toggled.connect(self.magenta_enabled_requested.emit)
+        self.magenta_input.currentIndexChanged.connect(
+            lambda _index: self.magenta_input_requested.emit(
+                str(self.magenta_input.currentData())
+            )
+        )
         self.follow_button.clicked.connect(self.follow_live)
         self.score_scroll.verticalScrollBar().actionTriggered.connect(
             self._manual_scroll
@@ -239,6 +267,24 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             "Pause  [Space]" if playing else "Play  [Space]"
         )
         self.summary_label.setText(summary)
+
+    def set_magenta_state(
+        self,
+        *,
+        enabled: bool,
+        input_mode: str,
+        status: str,
+    ) -> None:
+        self.magenta_button.blockSignals(True)
+        self.magenta_button.setChecked(bool(enabled))
+        self.magenta_button.setText("Magenta On" if enabled else "Magenta Off")
+        self.magenta_button.blockSignals(False)
+        index = self.magenta_input.findData(input_mode)
+        if index >= 0 and index != self.magenta_input.currentIndex():
+            self.magenta_input.blockSignals(True)
+            self.magenta_input.setCurrentIndex(index)
+            self.magenta_input.blockSignals(False)
+        self.magenta_status.setText(status)
 
     def set_camera_frame(self, frame) -> None:
         height, width, channels = frame.shape

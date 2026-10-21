@@ -29,6 +29,8 @@ from hand_movement import (
     palm_center,
 )
 from live_score import LiveScoreDisplay
+from magenta_protocol import DEFAULT_FRAME_RATE, DEFAULT_PORT, INPUT_MODES, INPUT_SOPRANO
+from magenta_router import MagentaRouter
 from performance_session import MODE_FULL, MODE_SOPRANO, PerformanceSession
 from performance_ui import IntegratedPerformanceWindow
 from realtime_engine import RealtimeChoraleEngine
@@ -208,6 +210,29 @@ def parse_args(argv=None):
         default=4,
         help="Number of recent measures shown in the live score",
     )
+    parser.add_argument(
+        "--magenta",
+        action="store_true",
+        help="Start with local Magenta accompaniment enabled",
+    )
+    parser.add_argument(
+        "--magenta-input",
+        choices=INPUT_MODES,
+        default=INPUT_SOPRANO,
+        help="Send only soprano or all four generated voices to Magenta",
+    )
+    parser.add_argument(
+        "--magenta-port",
+        type=int,
+        default=DEFAULT_PORT,
+        help="Loopback UDP port used by Code/magenta_host.py",
+    )
+    parser.add_argument(
+        "--magenta-frame-rate",
+        type=float,
+        default=DEFAULT_FRAME_RATE,
+        help="MIDI conditioning frame rate; MRT2 uses 25 Hz",
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--log-every", type=int, default=16)
     return parser.parse_args(argv)
@@ -238,6 +263,13 @@ def main():
         timbre_dwell_seconds=args.timbre_dwell,
     )
     session = PerformanceSession(engine, soprano, mode=args.performance_mode)
+    magenta = MagentaRouter(
+        enabled=args.magenta,
+        input_mode=args.magenta_input,
+        port=args.magenta_port,
+        frame_rate=args.magenta_frame_rate,
+        ticks_per_beat=session.ticks_per_beat,
+    ).start()
     player = NullPlayer() if args.dry_run else MidiPlayer(args.midi_port)
     capture = _open_camera(cv2, args.camera, args.width, args.height)
     tracker = MediaPipeHandTracker(args.model, num_hands=2)
@@ -261,7 +293,9 @@ def main():
             visible_bars=args.score_bars,
             port=0,
         ).start(open_browser=False, serve=False)
-    observers = (live_score.observe,) if live_score is not None else ()
+    observers = [magenta.observe]
+    if live_score is not None:
+        observers.append(live_score.observe)
     stop_event = threading.Event()
     audio_thread = threading.Thread(
         target=_audio_loop,
@@ -280,6 +314,7 @@ def main():
     print("Full SATB: left controls activity/tempo/articulation; right controls register/chords.")
     print("Soprano Performance: left controls accompaniment register/tempo/articulation; right performs soprano.")
     print("Soprano fingers: 1=piano, 2=violin, 3=choir, 4=flute, 5=synth pad; shake=trill, index tap=mordent.")
+    print("Magenta: use the window controls to enable accompaniment and select soprano/all input.")
     print("Press Q or Escape to stop.")
 
     pending_actions = deque()
@@ -291,11 +326,22 @@ def main():
     window = IntegratedPerformanceWindow(show_score=live_score is not None)
     window.mode_requested.connect(pending_actions.append)
     window.transport_requested.connect(lambda: pending_actions.append("transport"))
+    window.magenta_enabled_requested.connect(
+        lambda enabled: pending_actions.append(("magenta_enabled", bool(enabled)))
+    )
+    window.magenta_input_requested.connect(
+        lambda input_mode: pending_actions.append(("magenta_input", input_mode))
+    )
     window.close_requested.connect(stop_event.set)
     window.set_state(
         mode=session.mode,
         playing=session.is_playing,
         summary="Initializing hand tracking...",
+    )
+    window.set_magenta_state(
+        enabled=magenta.enabled,
+        input_mode=magenta.input_mode,
+        status=magenta.status(),
     )
     window.show()
 
@@ -321,6 +367,7 @@ def main():
                         continue
                     session.set_mode(action)
                     player.stop_all()
+                    magenta.reset_output()
                     finger_filter = FingerStateFilter()
                     quality_classifier = TiltQualityClassifier(args.quality_tilt)
                     chord_stabilizer = StableChordGesture(args.gesture_dwell)
@@ -328,9 +375,16 @@ def main():
                     print(f"Performance mode: {action}")
                 elif action == "transport":
                     playing = session.toggle_playing()
+                    magenta.set_playing(playing)
                     if not playing:
                         player.stop_all()
                     print("Playing" if playing else "Paused")
+                elif isinstance(action, tuple) and action[0] == "magenta_enabled":
+                    enabled = magenta.set_enabled(action[1])
+                    print("Magenta accompaniment on" if enabled else "Magenta accompaniment off")
+                elif isinstance(action, tuple) and action[0] == "magenta_input":
+                    input_mode = magenta.set_input_mode(action[1])
+                    print(f"Magenta input: {input_mode}")
 
             left_hand = hand_by_side(result.hands, "left", swap_hands=args.swap_hands)
             right_hand = hand_by_side(result.hands, "right", swap_hands=args.swap_hands)
@@ -516,12 +570,18 @@ def main():
                     f"articulation={latest_left.articulation:.2f}"
                 ),
             )
+            window.set_magenta_state(
+                enabled=magenta.enabled,
+                input_mode=magenta.input_mode,
+                status=magenta.status(),
+            )
             if live_score is not None:
                 window.update_score(live_score.snapshot())
             qt_app.processEvents()
     finally:
         stop_event.set()
         audio_thread.join(timeout=2.0)
+        magenta.close()
         if live_score is not None:
             live_score.stop()
         tracker.close()
