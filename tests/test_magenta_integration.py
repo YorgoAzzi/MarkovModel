@@ -1,6 +1,4 @@
-import socket
 import sys
-import threading
 import time
 import unittest
 from pathlib import Path
@@ -10,27 +8,29 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Code"))
 
-from magenta_host import MidiBackend, MockBackend, run_server
-from magenta_protocol import (
+from magenta_router import (
     INPUT_ALL,
     INPUT_SOPRANO,
-    MIDI_ONSET,
-    MIDI_SUSTAIN,
-    MagentaStatePacket,
+    MagentaRouter,
+    MidiMagentaBackend,
+    MockMagentaBackend,
 )
-from magenta_router import MagentaRouter, MagentaStateTracker
+
+
+VOICES = ("bass", "tenor", "alto", "soprano")
 
 
 def frame(
     *,
-    new_voices=("bass", "tenor", "alto", "soprano"),
+    new_voices=VOICES,
     released_voices=(),
-    sustained_voices=(),
+    sustained_voices=VOICES,
     pitches=None,
+    duration_seconds=0.025,
 ):
     pitches = pitches or {"bass": 48, "tenor": 55, "alto": 60, "soprano": 67}
     return SimpleNamespace(
-        duration_seconds=0.025,
+        duration_seconds=duration_seconds,
         pitches=pitches,
         controls=SimpleNamespace(articulation=1.0),
         velocity=84,
@@ -41,81 +41,6 @@ def frame(
         voice_duration_ticks={voice: 4 for voice in new_voices},
         planned_duration_ticks=4,
     )
-
-
-class ProtocolTests(unittest.TestCase):
-    def test_packet_round_trip_preserves_128_pitch_state(self):
-        notes = [0] * 128
-        notes[64] = MIDI_ONSET
-        packet = MagentaStatePacket(
-            sequence=8,
-            sent_at_ns=123,
-            enabled=True,
-            input_mode=INPUT_SOPRANO,
-            notes=tuple(notes),
-            velocity=88,
-            tempo_bpm=96,
-        )
-
-        restored = MagentaStatePacket.from_bytes(packet.to_bytes())
-
-        self.assertEqual(restored, packet)
-
-    def test_packet_rejects_wrong_state_size(self):
-        with self.assertRaises(ValueError):
-            MagentaStatePacket(0, 0, True, INPUT_ALL, (0,) * 127)
-
-
-class StateTrackerTests(unittest.TestCase):
-    def test_soprano_filter_and_all_voice_filter(self):
-        tracker = MagentaStateTracker()
-        tracker.consume(frame(), now=1.0)
-
-        soprano = tracker.state(INPUT_SOPRANO)
-        self.assertEqual([i for i, value in enumerate(soprano) if value], [67])
-        self.assertEqual(soprano[67], MIDI_ONSET)
-
-        all_voices = tracker.state(INPUT_ALL, retrigger=True)
-        self.assertEqual(
-            [i for i, value in enumerate(all_voices) if value],
-            [48, 55, 60, 67],
-        )
-        self.assertEqual(all_voices[67], MIDI_ONSET)
-        self.assertEqual(all_voices[48], MIDI_ONSET)
-
-    def test_release_and_expiration_remove_notes(self):
-        tracker = MagentaStateTracker()
-        tracker.consume(frame(), now=1.0)
-        tracker.state(INPUT_ALL)
-        tracker.consume(
-            frame(new_voices=(), released_voices=("soprano",)),
-            now=1.01,
-        )
-        state = tracker.state(INPUT_ALL)
-        self.assertEqual(state[67], 0)
-
-        tracker.expire(2.0)
-        state = tracker.state(INPUT_ALL)
-        self.assertFalse(any(state))
-
-    def test_short_onset_is_not_lost_before_one_25_hz_packet(self):
-        tracker = MagentaStateTracker()
-        tracker.consume(frame(new_voices=("soprano",)), now=1.0)
-        tracker.expire(2.0)
-
-        first = tracker.state(INPUT_SOPRANO)
-        self.assertEqual(first[67], MIDI_ONSET)
-        tracker.expire(2.0)
-        self.assertFalse(any(tracker.state(INPUT_SOPRANO)))
-
-    def test_filtered_out_onsets_do_not_prevent_expiration(self):
-        tracker = MagentaStateTracker()
-        tracker.consume(frame(), now=1.0)
-        tracker.state(INPUT_SOPRANO)
-
-        tracker.expire(2.0)
-
-        self.assertFalse(any(tracker.state(INPUT_ALL)))
 
 
 class FakeMido:
@@ -130,11 +55,13 @@ class FakeMido:
         def close(self):
             self.closed = True
 
-    def __init__(self):
+    def __init__(self, names=None):
+        self.names = names or ["Microsoft Synth", "Magenta RT Input 1"]
         self.port = self.Port()
+        self.opened = None
 
     def get_output_names(self):
-        return ["Microsoft Synth", "Magenta RT Input 1"]
+        return list(self.names)
 
     def open_output(self, name):
         self.opened = name
@@ -146,61 +73,122 @@ class FakeMido:
 
 
 class MidiBackendTests(unittest.TestCase):
-    def test_midi_backend_forwards_onset_sustain_and_release(self):
+    def test_backend_finds_the_magenta_virtual_port_and_sends_direct_midi(self):
         fake = FakeMido()
-        backend = MidiBackend(mido_module=fake)
-        notes = [0] * 128
-        notes[64] = MIDI_ONSET
-        packet = MagentaStatePacket(0, 0, True, INPUT_SOPRANO, tuple(notes), 91)
-        backend.handle(packet)
-        notes[64] = MIDI_SUSTAIN
-        backend.handle(MagentaStatePacket(1, 0, True, INPUT_SOPRANO, tuple(notes), 91))
-        backend.handle(
-            MagentaStatePacket(2, 0, False, INPUT_SOPRANO, (0,) * 128, 91)
-        )
+        backend = MidiMagentaBackend(mido_module=fake)
 
-        note_messages = fake.port.messages
-        self.assertEqual([message["type"] for message in note_messages], ["note_on", "note_off"])
-        self.assertEqual(note_messages[0]["velocity"], 91)
+        self.assertTrue(backend.connect())
+        self.assertEqual(fake.opened, "Magenta RT Input 1")
+        backend.send("note_on", 64, 91)
+        backend.send("note_off", 64, 0)
+
+        self.assertEqual(
+            [message["type"] for message in fake.port.messages],
+            ["note_on", "note_off"],
+        )
+        self.assertEqual(fake.port.messages[0]["velocity"], 91)
         backend.close()
         self.assertTrue(fake.port.closed)
 
+    def test_missing_virtual_port_is_reported_without_crashing(self):
+        backend = MidiMagentaBackend(mido_module=FakeMido(["Microsoft Synth"]))
 
-class RouterLoopbackTests(unittest.TestCase):
-    def test_router_connects_to_local_mock_gateway(self):
-        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
-        backend = MockBackend(log_every=0)
-        stop_event = threading.Event()
-        server = threading.Thread(
-            target=run_server,
-            kwargs={"backend": backend, "port": port, "stop_event": stop_event},
-            daemon=True,
+        self.assertFalse(backend.connect())
+        self.assertIn("MIDI port not found", backend.error)
+
+
+class DirectRouterTests(unittest.TestCase):
+    def make_router(self, *, input_mode=INPUT_SOPRANO, enabled=True):
+        backend = MockMagentaBackend(log_messages=False)
+        backend.connect()
+        router = MagentaRouter(
+            enabled=enabled,
+            input_mode=input_mode,
+            backend="mock",
+            backend_instance=backend,
         )
-        server.start()
-        router = MagentaRouter(enabled=True, port=port, frame_rate=50).start()
-        try:
-            router.observe(frame())
-            deadline = time.monotonic() + 1.0
-            while "Connected" not in router.status() and time.monotonic() < deadline:
-                time.sleep(0.02)
-            self.assertIn("Connected (mock)", router.status())
-            self.assertGreater(backend.frames, 0)
-        finally:
-            router.close()
-            stop_event.set()
-            server.join(timeout=1.0)
+        return router, backend
 
-    def test_disabled_router_ignores_frames_until_reenabled(self):
-        router = MagentaRouter(enabled=False)
+    def test_soprano_filter_sends_only_the_final_soprano(self):
+        router, backend = self.make_router(input_mode=INPUT_SOPRANO)
+
         router.observe(frame())
-        self.assertFalse(router.tracker.active)
+
+        self.assertEqual(
+            backend.events,
+            [{"type": "note_on", "note": 67, "velocity": 84}],
+        )
+        self.assertEqual(router.active, {"soprano": 67})
+        router.close()
+
+    def test_all_filter_sends_all_four_voices(self):
+        router, backend = self.make_router(input_mode=INPUT_ALL)
+
+        router.observe(frame())
+
+        note_ons = [event for event in backend.events if event["type"] == "note_on"]
+        self.assertEqual({event["note"] for event in note_ons}, {48, 55, 60, 67})
+        self.assertEqual(set(router.active), set(VOICES))
+        router.close()
+
+    def test_input_change_releases_old_notes_and_bootstraps_new_filter(self):
+        router, backend = self.make_router(input_mode=INPUT_SOPRANO)
+        current = frame()
+        router.observe(current)
+
+        router.set_input_mode(INPUT_ALL)
+        router.observe(current)
+
+        self.assertIn({"type": "note_off", "note": 67, "velocity": 0}, backend.events)
+        self.assertEqual(set(router.active), set(VOICES))
+        router.close()
+
+    def test_pause_disable_and_close_release_active_notes(self):
+        router, backend = self.make_router(input_mode=INPUT_ALL)
+        router.observe(frame())
+
+        router.set_playing(False)
+
+        note_offs = [event for event in backend.events if event["type"] == "note_off"]
+        self.assertEqual({event["note"] for event in note_offs}, {48, 55, 60, 67})
+        self.assertFalse(router.active)
+        router.close()
+
+    def test_non_sustained_note_uses_articulation_gate(self):
+        router, backend = self.make_router(input_mode=INPUT_SOPRANO)
+        router.observe(
+            frame(
+                new_voices=("soprano",),
+                sustained_voices=(),
+                duration_seconds=0.01,
+            )
+        )
+
+        deadline = time.monotonic() + 0.3
+        while router.active and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        self.assertFalse(router.active)
+        self.assertEqual(backend.events[-1]["type"], "note_off")
+        router.close()
+
+    def test_disabled_router_ignores_frames_until_enabled(self):
+        router, backend = self.make_router(enabled=False)
+        router.observe(frame())
+        self.assertFalse(backend.events)
 
         router.set_enabled(True)
         router.observe(frame())
-        self.assertEqual(set(router.tracker.active), {"bass", "tenor", "alto", "soprano"})
+
+        self.assertEqual(backend.events[0]["type"], "note_on")
+        router.close()
+
+    def test_router_status_uses_backend_connection_state(self):
+        router, _backend = self.make_router()
+        self.assertEqual(router.status(), "Connected (mock)")
+        router.set_enabled(False)
+        self.assertEqual(router.status(), "Off")
+        router.close()
 
 
 if __name__ == "__main__":

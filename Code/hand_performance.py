@@ -29,8 +29,14 @@ from hand_movement import (
     palm_center,
 )
 from live_score import LiveScoreDisplay
-from magenta_protocol import DEFAULT_FRAME_RATE, DEFAULT_PORT, INPUT_MODES, INPUT_SOPRANO
-from magenta_router import MagentaRouter
+from magenta_router import (
+    BACKENDS,
+    DEFAULT_MAGENTA_PORT,
+    INPUT_MODES,
+    INPUT_SOPRANO,
+    MagentaRouter,
+)
+from piano_roll import SopranoPianoRoll
 from performance_session import MODE_FULL, MODE_SOPRANO, PerformanceSession
 from performance_ui import IntegratedPerformanceWindow
 from realtime_engine import RealtimeChoraleEngine
@@ -222,16 +228,15 @@ def parse_args(argv=None):
         help="Send only soprano or all four generated voices to Magenta",
     )
     parser.add_argument(
-        "--magenta-port",
-        type=int,
-        default=DEFAULT_PORT,
-        help="Loopback UDP port used by Code/magenta_host.py",
+        "--magenta-backend",
+        choices=BACKENDS,
+        default="midi",
+        help="Use the real Magenta MIDI input or an in-process mock",
     )
     parser.add_argument(
-        "--magenta-frame-rate",
-        type=float,
-        default=DEFAULT_FRAME_RATE,
-        help="MIDI conditioning frame rate; MRT2 uses 25 Hz",
+        "--magenta-midi-port",
+        default=DEFAULT_MAGENTA_PORT,
+        help="Virtual MIDI destination created by the Magenta standalone app",
     )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--log-every", type=int, default=16)
@@ -266,9 +271,8 @@ def main():
     magenta = MagentaRouter(
         enabled=args.magenta,
         input_mode=args.magenta_input,
-        port=args.magenta_port,
-        frame_rate=args.magenta_frame_rate,
-        ticks_per_beat=session.ticks_per_beat,
+        backend=args.magenta_backend,
+        port_name=args.magenta_midi_port,
     ).start()
     player = NullPlayer() if args.dry_run else MidiPlayer(args.midi_port)
     capture = _open_camera(cv2, args.camera, args.width, args.height)
@@ -284,6 +288,7 @@ def main():
     finger_filter = FingerStateFilter()
     chord_stabilizer = StableChordGesture(args.gesture_dwell)
     live_score = None
+    piano_roll = None
     if not args.no_live_score:
         live_score = LiveScoreDisplay(
             ticks_per_beat=session.ticks_per_beat,
@@ -293,9 +298,21 @@ def main():
             visible_bars=args.score_bars,
             port=0,
         ).start(open_browser=False, serve=False)
+        piano_roll = SopranoPianoRoll(
+            ticks_per_beat=session.ticks_per_beat,
+            beats_per_bar=session.beats_per_bar,
+            visible_bars=args.score_bars,
+        )
     observers = [magenta.observe]
     if live_score is not None:
         observers.append(live_score.observe)
+    if piano_roll is not None:
+        observers.append(
+            lambda frame: piano_roll.observe(
+                frame,
+                enabled=session.mode == MODE_SOPRANO,
+            )
+        )
     stop_event = threading.Event()
     audio_thread = threading.Thread(
         target=_audio_loop,
@@ -577,6 +594,8 @@ def main():
             )
             if live_score is not None:
                 window.update_score(live_score.snapshot())
+            if piano_roll is not None:
+                window.update_piano_roll(piano_roll.snapshot())
             qt_app.processEvents()
     finally:
         stop_event.set()

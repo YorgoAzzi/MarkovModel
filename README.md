@@ -281,49 +281,54 @@ vertical travel produces one scale step, `--pinch-distance` to tune pinch
 detection, `--trill-shake-speed` to tune the trill, and `--timbre-dwell` to
 control how long a finger count must remain stable before the sound changes.
 
-### Live sheet music
+### Live music visualization
 
-The PyQt performance window places the camera and live SATB score side by side.
-Soprano and alto appear on the treble staff, tenor and bass on the bass staff,
-and the current sonority is red. The active section contains four measures by
-default and updates whenever the generator starts new notes. Completed sections
-remain in the scrollable score panel. The display follows the newest section
-until you scroll upward; the **Follow live** button returns to the current music.
+The PyQt performance window places the camera and a mode-specific music view
+side by side. **Full SATB mode** shows the existing four-voice score: soprano
+and alto on the treble staff, tenor and bass on the bass staff, with the current
+sonority in red. **Soprano Performance mode** replaces that score with a
+soprano-only piano roll. Pitch runs vertically and time runs horizontally;
+blue blocks are previous notes, green is the active note, orange marks short
+ornaments, and a red line is the current playhead. A stationary hand produces
+one block that grows continuously until movement changes or releases the note.
+
+Both views retain their complete history. Four measures are visible by default,
+and older material remains available by scrolling. The display follows the
+newest music until you scroll backward; the **Follow live** button returns to
+the current position. Alto, tenor, and bass continue playing in Soprano
+Performance mode but do not appear in its piano roll.
 
 Music playback does not wait for notation. Generated onsets enter a queue, and
 a background worker converts them through `music21` to MusicXML and Verovio to
 SVG. The Qt interface renders those SVG pages directly inside the application.
 
-Use `--score-bars 6` to show six measures in each score section or
-`--no-live-score` to hide the score panel.
+Use `--score-bars 6` to show six measures in each score section or piano-roll
+window, or `--no-live-score` to hide the visualization panel.
 
 ### Magenta RealTime accompaniment
 
 The hand interface can send either the soprano or the complete SATB output to
-Magenta RealTime 2 as a 25 Hz MIDI-conditioning stream. The camera application
-and Magenta run on the same computer as separate processes. A local-only
-gateway keeps model inference away from the hand-tracking and music threads.
+Magenta RealTime 2 through the virtual `Magenta RT Input` port. The connection
+uses direct MIDI; no custom protocol, UDP gateway, or second project process is
+required.
 
-Test the complete connection without Magenta hardware by starting the mock
-gateway first:
+Test the note routing without Magenta hardware using the in-process mock:
 
 ```bash
-python "Code/magenta_host.py" --backend mock
-python "Code/hand_performance.py" --dry-run --magenta
+python "Code/hand_performance.py" --dry-run --magenta --magenta-backend mock
 ```
 
 On a compatible Apple Silicon computer, start the official MRT2 standalone app
-and load a model. Its virtual `Magenta RT Input` port is connected with:
+and load a model, then run:
 
 ```bash
-python "Code/magenta_host.py" --backend midi
-python "Code/hand_performance.py" --magenta
+python "Code/hand_performance.py" --dry-run --magenta --magenta-backend midi
 ```
 
 The integrated UI provides **Magenta On/Off** and **Soprano only / All four
 voices** controls plus connection status. The existing MIDI performance and
-live score continue if the gateway is unavailable. See `Code/MAGENTA.md` for
-the architecture and setup details.
+live score continue if the Magenta port is unavailable, and the router retries
+the connection in the background. See `Code/MAGENTA.md` for setup details.
 
 Use `--dry-run` to test tracking without MIDI. Hand labels are swapped by
 default for the current mirrored-camera setup; add `--no-swap-hands` if the

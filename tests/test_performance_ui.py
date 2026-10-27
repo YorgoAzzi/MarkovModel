@@ -12,8 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Code"))
 
 from PyQt5 import QtWidgets
-from magenta_protocol import INPUT_ALL
-from performance_session import MODE_SOPRANO
+from magenta_router import INPUT_ALL
+from performance_session import MODE_FULL, MODE_SOPRANO
+from piano_roll import PianoRollNote
 from performance_ui import IntegratedPerformanceWindow, qt_compatible_svg
 
 
@@ -43,14 +44,43 @@ class IntegratedWindowTests(unittest.TestCase):
                     "bars_per_page": 4,
                 }
             )
+            window.update_piano_roll(
+                {
+                    "status": "Measure 1 | 1 soprano note",
+                    "notes": (PianoRollNote(0, 8, 72, active=True),),
+                    "current_tick": 7,
+                    "ticks_per_beat": 16,
+                    "ticks_per_bar": 64,
+                    "visible_bars": 4,
+                    "version": 1,
+                }
+            )
             self.assertIsNotNone(window.camera_label.pixmap())
             self.assertTrue(window.soprano_button.isChecked())
             self.assertIn("Play", window.transport_button.text())
-            self.assertEqual(window.score_status.text(), "Measure 1")
+            self.assertEqual(window.visual_title.text(), "Soprano piano roll")
+            self.assertEqual(window.score_status.text(), "Measure 1 | 1 soprano note")
+            self.assertIs(window.visual_stack.currentWidget(), window.piano_roll)
             self.assertEqual(len(window._score_labels), 1)
             self.assertTrue(window.magenta_button.isChecked())
             self.assertEqual(window.magenta_input.currentData(), INPUT_ALL)
             self.assertEqual(window.magenta_status.text(), "Connected (mock)")
+
+            window.set_state(mode=MODE_FULL, playing=True, summary="full")
+            window.update_score(
+                {
+                    "status": "Measure 1",
+                    "page_versions": (1,),
+                    "svgs": (
+                        '<svg xmlns="http://www.w3.org/2000/svg" '
+                        'width="100" height="50"></svg>',
+                    ),
+                    "bars_per_page": 4,
+                }
+            )
+            self.assertEqual(window.visual_title.text(), "Live SATB score")
+            self.assertEqual(window.score_status.text(), "Measure 1")
+            self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
         finally:
             window.close()
 

@@ -1,0 +1,171 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=0.2em,itemsep=0.25em}
+
+\definecolor{linkblue}{HTML}{1F4E79}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkblue,
+    urlcolor=linkblue,
+    pdftitle={VIP Week 6 Report},
+    pdfauthor={Yorgo Azzi}
+}
+
+\begin{document}
+
+\begin{center}
+    {\Large\bfseries VIP Week 6 Report}\\[0.5em]
+    {\large Yorgo Azzi}\\[0.25em]
+    October 21, 2026
+\end{center}
+
+\section{Overview}
+
+This week, I integrated Google Magenta RealTime 2 with the movement-controlled
+Markov music system. The objective was to use the symbolic music produced by
+the existing application as live input to a generative audio model. Magenta can
+then create a richer musical texture or accompaniment around either the
+soprano alone or the complete four-voice output.
+
+The complete connection was tested on a compatible machine and worked
+successfully. Hand movement and Markov generation produced the symbolic input,
+the input reached Magenta through its virtual MIDI port, and Magenta generated
+audio in response.
+
+\section{Work Completed}
+
+\subsection{Magenta RealTime Integration}
+
+Magenta RealTime 2 generates continuous stereo audio and can be controlled by
+a text prompt and live MIDI notes. The text prompt determines the general
+instrumentation and musical character, while the MIDI input provides pitch,
+timing, note onset, and sustain information.
+
+The output of the existing system is captured after the Markov engine and the
+hand-controlled soprano have been combined. Each generated event contains the
+current pitches, new note onsets, released notes, sustained notes, velocity,
+and timing. These events are converted into the 128-pitch MIDI-conditioning
+state used by Magenta, where each pitch is represented as off, sustained, or a
+new onset.
+
+The conditioning data are updated at 25 frames per second. This preserves short
+notes and held notes without making Magenta wait for the next measure or chord
+change. Pausing playback, disabling Magenta, or switching input modes sends a
+clear note reset so that notes do not remain stuck.
+
+\subsection{Soprano and Full-Texture Inputs}
+
+I added two selectable Magenta input modes:
+
+\begin{itemize}
+    \item \textbf{Soprano only} sends only the final soprano line. In Full SATB
+    mode, this soprano comes from the Markov and voice-leading engine. In
+    Soprano Performance mode, it comes from the performer's right-hand
+    movement. Magenta is then free to infer an accompaniment around the melody.
+    \item \textbf{All four voices} sends soprano, alto, tenor, and bass. This
+    gives Magenta the complete harmony and rhythm produced by the Markov system,
+    so its generated audio can follow the existing musical structure more
+    closely.
+\end{itemize}
+
+The camera application now includes a Magenta On/Off button, an input selector,
+and a connection-status display. These controls can be changed during a
+performance without restarting the hand tracker or Markov generator.
+
+\subsection{Local Gateway and Testing Support}
+
+The first implementation uses a local gateway between the camera application
+and Magenta. The realtime application converts the generated music into a
+fixed-rate conditioning stream and sends it over the computer's loopback
+address. The gateway then forwards the note states as MIDI messages to the
+virtual \texttt{Magenta RT Input} port created by the official Magenta
+standalone application.
+
+This design also includes a mock backend. The mock receives and displays the
+same pitches without running the Magenta neural model, allowing the complete
+data path, filtering, and interface status to be tested on the development
+laptop. Communication failure does not stop the camera, Markov model, MIDI
+playback, or live score.
+
+\section{Results}
+
+The main results from this week were:
+
+\begin{itemize}
+    \item The existing hand and Markov performance can now be used as live MIDI
+    conditioning for Magenta RealTime 2.
+    \item The user can switch between soprano-only and complete SATB input from
+    the integrated application.
+    \item The final performed soprano is used, so Magenta receives the Markov
+    soprano in Full SATB mode and the hand-controlled soprano in Soprano
+    Performance mode.
+    \item Onsets, sustained notes, releases, repeated notes, short notes, pause,
+    and mode changes are represented correctly in the conditioning stream.
+    \item A mock backend allows the connection to be verified without loading
+    the Magenta model.
+    \item The full system was tested on a compatible machine. The gateway found
+    the Magenta virtual MIDI input, the interface reported a successful
+    connection, and Magenta produced audio from the generated musical input.
+\end{itemize}
+
+\section{Challenges}
+
+Magenta produces stereo audio rather than symbolic MIDI output. Its generated
+notes therefore do not appear in the live score, which continues to show only
+the music created by the Markov and hand-performance system. The output is also
+influenced by Magenta's text prompt and internal generation, so it is not a
+deterministic orchestration of the input notes. Soprano-only input gives the
+model more freedom, while all-voice input constrains it more strongly and may
+produce a denser result.
+
+The Magenta audio also has more latency than the direct MIDI soprano because it
+must pass through model inference and audio buffering. Keeping the immediate
+soprano sound alongside the generated background may therefore provide a
+stronger feeling of direct control than using only Magenta audio.
+
+Finally, the current local protocol and gateway work, but they add an extra
+process and communication layer. Since the official Magenta application
+already provides a virtual MIDI input on the same computer, the performance
+application could send MIDI to it directly. This would preserve the musical
+behavior while simplifying setup and reducing the number of files and commands.
+
+\section{Next Steps}
+
+\begin{itemize}
+    \item Simplify the architecture by sending the selected soprano or SATB
+    notes directly to \texttt{Magenta RT Input}. Keep the mock option inside the
+    performance application and remove the additional local protocol and
+    gateway process.
+    \item Compare soprano-only and all-voice conditioning using the same prompts
+    and musical gestures. Evaluate harmonic agreement, responsiveness, musical
+    density, and the amount of creative freedom given to Magenta.
+    \item Replace the traditional sheet-music view of the soprano with a live
+    piano-roll display. This should make the performed pitch direction, note
+    duration, and timing easier to follow during fast hand-controlled passages.
+\end{itemize}
+
+\section{Resources}
+
+\begin{itemize}
+    \item Project repository:
+    \url{https://github.com/YorgoAzzi/MarkovModel}
+    \item Magenta RealTime 2 repository:
+    \url{https://github.com/magenta/magenta-realtime}
+    \item Magenta RealTime 2 model description:
+    \url{https://github.com/magenta/magenta-realtime/blob/main/MODEL.md}
+    \item Magenta standalone application documentation:
+    \url{https://github.com/magenta/magenta-realtime/blob/main/docs/apps/standalone_app.md}
+\end{itemize}
+
+\end{document}

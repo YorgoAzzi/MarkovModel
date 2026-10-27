@@ -1,9 +1,8 @@
-# Magenta RealTime integration
+# Direct Magenta RealTime integration
 
-The performance application can now send its generated notes to Magenta
-RealTime 2 for audio accompaniment. Everything runs on one computer, but the
-camera/music application and Magenta remain separate processes so model
-inference cannot block hand tracking, MIDI timing, or the score display.
+The performance application sends generated notes directly to the virtual MIDI
+input created by the official Magenta RealTime 2 standalone application. There
+is no custom protocol, UDP connection, gateway, or second project process.
 
 ## Data path
 
@@ -11,72 +10,57 @@ inference cannot block hand tracking, MIDI timing, or the score display.
 MediaPipe hands -> PerformanceSession -> GeneratedTick
                                       -> normal MIDI playback
                                       -> live score
-                                      -> MagentaRouter (25 Hz)
-                                           -> 127.0.0.1 UDP gateway
-                                                -> mock logger, or
-                                                -> Magenta RT Input MIDI port
-                                                     -> MRT2 audio
+                                      -> direct Magenta MIDI router
+                                           -> Magenta RT Input
+                                                -> MRT2 audio
 ```
 
-The packets contain the 128-pitch conditioning state expected by MRT2:
-`0=off`, `1=sustain`, and `2=onset`. The router follows independent voice
-onsets, releases, held soprano notes, articulation gates, pause/play, and mode
-changes. Magenta communication never runs on the musical clock thread.
+The router follows independent voice onsets, releases, held soprano notes,
+articulation gates, pause/play, and mode changes. **Soprano only** sends the
+final generated or hand-performed soprano. **All four voices** sends the full
+SATB texture. The official Magenta application converts these MIDI events into
+its internal conditioning frames.
 
-## Test on the current computer
+## Test without Magenta
 
-Open one terminal and start the mock gateway:
+The in-process mock backend prints the MIDI events that would be sent to MRT2:
 
 ```bash
-python Code/magenta_host.py --backend mock
+python Code/hand_performance.py --dry-run --magenta --magenta-backend mock
 ```
 
-Open another terminal and run the hand application:
-
-```bash
-python Code/hand_performance.py --dry-run --magenta
-```
-
-The gateway prints the pitches it receives. The performance window shows
-`Connected (mock)` when the loopback path is working. `--dry-run` only disables
-the existing synthesizer output; it does not disable Magenta packets.
+The performance window shows `Connected (mock)`. `--dry-run` disables the
+project's ordinary synthesizer output but does not disable the Magenta router.
 
 ## Run with Magenta RealTime 2
 
 On a compatible Apple Silicon computer:
 
-1. Install/build the official MRT2 standalone app and download its model files.
-2. Start MRT2, load a model, and confirm that it created the virtual MIDI port
+1. Start the official MRT2 standalone application.
+2. Load a model and confirm that the application created a virtual MIDI input
    named `Magenta RT Input`.
-3. Start the local MIDI gateway:
+3. Start the hand interface:
 
    ```bash
-   python Code/magenta_host.py --backend midi
+   python Code/hand_performance.py --dry-run --magenta --magenta-backend midi
    ```
 
-4. Start this project's interface:
-
-   ```bash
-   python Code/hand_performance.py --magenta
-   ```
+The UI shows `Connected (Magenta RT Input)` after the port opens. If MRT2 is not
+running, it reports that the port was not found and retries in the background.
+The camera, Markov generator, live score, and other MIDI output continue to run.
 
 Use **Magenta On/Off** in the application to enable accompaniment. Choose
-**Soprano only** to condition Magenta with the performed/generated melody, or
-**All four voices** to send the entire SATB texture. The official MRT2 app owns
-the generated audio output and its prompt/style controls.
+**Soprano only** to guide Magenta with the melody or **All four voices** to send
+the complete texture. The official MRT2 application owns the generated audio
+and its prompt/style controls.
 
-If the virtual port has a different name, pass part of it explicitly:
-
-```bash
-python Code/magenta_host.py --backend midi --midi-port "Magenta RT Input"
-```
-
-List available MIDI destinations with:
+If the virtual port has a different name, pass part of that name directly:
 
 ```bash
-python Code/magenta_host.py --list-midi-ports
+python Code/hand_performance.py --dry-run --magenta --magenta-backend midi \
+    --magenta-midi-port "Magenta RT Input"
 ```
 
-The gateway only binds to `127.0.0.1`; it does not accept traffic from another
-computer. If the gateway or MRT2 stops, the existing Markov performance keeps
-running and the UI changes to `Waiting for local gateway`.
+Remove `--dry-run` to hear the project's regular MIDI output together with the
+Magenta audio. In that case, use `--midi-port` to select a separate synthesizer
+so the ordinary player does not also target Magenta's virtual port.
