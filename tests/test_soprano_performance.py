@@ -1,4 +1,5 @@
 import sys
+import threading
 import unittest
 from pathlib import Path
 
@@ -6,7 +7,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Code"))
 
-from performance_session import MODE_FULL, MODE_SOPRANO, PerformanceSession
+from performance_session import (
+    MODE_CONDUCTOR,
+    MODE_FULL,
+    MODE_SOPRANO,
+    PerformanceSession,
+)
 from realtime_engine import RealtimeChoraleEngine
 from soprano_performance import SopranoGestureController
 
@@ -174,6 +180,49 @@ class SessionIntegrationTests(unittest.TestCase):
         session.set_playing(False)
         self.assertFalse(session.is_playing)
         self.assertEqual(engine.tick_index, before)
+
+    def test_conductor_waits_for_beat_and_melody_moves_between_beats(self):
+        engine = RealtimeChoraleEngine.from_paths(
+            ROOT / "models/factorized_markov_model.npz",
+            ROOT / "models/chord_markov_model.npz",
+            ROOT / "dataChords",
+            ROOT / "cache/progression_blocks_cache.json",
+            ticks_per_beat=16,
+            control_smoothing=1.0,
+            seed=54,
+        )
+        session = PerformanceSession(
+            engine,
+            SopranoGestureController(),
+            mode=MODE_CONDUCTOR,
+        )
+        stop_event = threading.Event()
+
+        self.assertIsNone(session.wait_for_frame(stop_event, timeout=0.001))
+        self.assertEqual(engine.tick_index, 0)
+
+        session.request_conductor_beat(
+            degree=6,
+            strength=0.8,
+            tempo_bpm=100.0,
+            timestamp=1.0,
+        )
+        first = session.wait_for_frame(stop_event, timeout=0.001)
+        self.assertEqual(first.chord[0], 9)  # Degree 6 in C major is A.
+        self.assertEqual(set(first.new_voices), {"bass", "tenor", "alto", "soprano"})
+        self.assertEqual(set(engine.generated_voices), {"bass", "tenor", "alto"})
+        initial_pitch = first.pitches["soprano"]
+
+        session.request_conductor_melody_step(1, timestamp=1.1)
+        melody = session.wait_for_frame(stop_event, timeout=0.001)
+        self.assertGreater(melody.pitches["soprano"], initial_pitch)
+        self.assertEqual(melody.new_voices, frozenset({"soprano"}))
+        self.assertTrue({"bass", "tenor", "alto"}.issubset(melody.sustained_voices))
+
+        session.request_conductor_beat(degree=2, timestamp=1.6)
+        second = session.wait_for_frame(stop_event, timeout=0.001)
+        self.assertEqual(second.tick_index, 16)
+        self.assertEqual(second.chord[0], 2)  # Degree 2 in C major is D.
 
 
 if __name__ == "__main__":

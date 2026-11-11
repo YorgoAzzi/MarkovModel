@@ -42,6 +42,9 @@ class SopranoPianoRoll:
         self._active_sustained = False
         self._current_tick = -1
         self._enabled = False
+        self._source_timing = False
+        self._source_origin = 0
+        self._display_origin = 0
         self._version = 0
 
     def _finish_active(self, end_tick: int) -> None:
@@ -54,7 +57,13 @@ class SopranoPianoRoll:
         self._active = None
         self._active_sustained = False
 
-    def observe(self, frame, *, enabled: bool = True) -> None:
+    def observe(
+        self,
+        frame,
+        *,
+        enabled: bool = True,
+        use_source_ticks: bool = False,
+    ) -> None:
         """Consume one generated tick without blocking the audio thread."""
         with self._lock:
             if not enabled:
@@ -64,8 +73,21 @@ class SopranoPianoRoll:
                 self._enabled = False
                 return
 
+            starting_segment = not self._enabled or self._source_timing != bool(
+                use_source_ticks
+            )
             self._enabled = True
-            self._current_tick += 1
+            self._source_timing = bool(use_source_ticks)
+            if self._source_timing:
+                source_tick = int(getattr(frame, "tick_index", 0))
+                if starting_segment:
+                    self._source_origin = source_tick
+                    self._display_origin = self._current_tick + 1
+                self._current_tick = self._display_origin + max(
+                    0, source_tick - self._source_origin
+                )
+            else:
+                self._current_tick += 1
             tick = self._current_tick
             released = set(getattr(frame, "released_voices", ()))
             new_voices = set(

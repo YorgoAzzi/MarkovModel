@@ -1,0 +1,179 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=0.2em,itemsep=0.25em}
+
+\definecolor{linkblue}{HTML}{1F4E79}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkblue,
+    urlcolor=linkblue,
+    pdftitle={VIP Week 7 Report},
+    pdfauthor={Yorgo Azzi}
+}
+
+\begin{document}
+
+\begin{center}
+    {\Large\bfseries VIP Week 7 Report}\\[0.5em]
+    {\large Yorgo Azzi}\\[0.25em]
+    October 28, 2026
+\end{center}
+
+\section{Overview}
+
+This week, I simplified the connection between the movement-controlled music
+system and Magenta RealTime 2. I also adjusted how strongly the notes produced
+by the Markov system influence Magenta. The objective was to make the final
+generated audio follow the movement-controlled musical output more clearly,
+rather than allowing the Magenta model to behave too independently.
+
+A smaller interface improvement was also completed: Soprano Performance mode
+now uses a piano roll instead of traditional notation for the performed melody.
+
+\section{Work Completed}
+
+\subsection{Simplified Direct Magenta Connection}
+
+The previous Magenta implementation used a custom communication protocol and
+a separate gateway process. Although this design worked, it required two
+project commands and converted the musical events into an intermediate
+fixed-rate data format before converting them back to MIDI.
+
+The performance application now sends MIDI note-on and note-off messages
+directly to the virtual \texttt{Magenta RT Input} port provided by the official
+Magenta application. The extra protocol and gateway files were removed. The
+complete setup now requires only the Magenta standalone application and the
+main hand-performance program.
+
+The direct router still provides the two input options developed previously:
+
+\begin{itemize}
+    \item \textbf{Soprano only} sends the final melody to Magenta so that the
+    model has more freedom to generate the surrounding texture.
+    \item \textbf{All four voices} sends soprano, alto, tenor, and bass so that
+    Magenta follows more of the harmony and rhythm created by the Markov model.
+\end{itemize}
+
+The router handles held notes, repeated pitches, note releases, pauses, and
+changes between the two input options. If the Magenta port is unavailable, the
+main music and camera interface continue running, while the connection is
+retried in the background. An internal mock option is also retained for testing
+the routing without loading the Magenta model.
+
+\subsection{Strengthening the Influence of the Markov Output}
+
+The complete control chain is now:
+
+\begin{center}
+Movement $\longrightarrow$ Markov music generation
+$\longrightarrow$ MIDI conditioning $\longrightarrow$ Magenta audio
+\end{center}
+
+I adjusted the influence of the input notes in Magenta RealTime so that its
+output responds more clearly to the pitches and timing received from the
+Markov model. Because movement controls the musical decisions made by the
+Markov system, this also makes the effect of the performer's movement more
+recognizable in the final Magenta output.
+
+The adjustment preserves Magenta's ability to create a richer audio texture,
+while giving the input melody or four-voice texture a more noticeable role in
+the result. The system therefore behaves as one connected pipeline instead of
+two generators whose outputs are only loosely related.
+
+\subsection{Soprano Piano Roll}
+
+Soprano Performance mode now displays only the performed soprano as a live
+piano roll. Pitch is shown vertically, time horizontally, and a stationary
+hand produces one continuously growing note block. The complete soprano
+history remains scrollable. Full SATB mode continues to use the existing
+four-voice score. This visualization reads the same events sent to MIDI and
+does not affect music generation or playback timing.
+
+\section{Results}
+
+The main results were:
+
+\begin{itemize}
+    \item Magenta now receives the selected musical voices through a direct
+    MIDI connection, without a custom protocol or separate gateway process.
+    \item The complete system has a simpler startup procedure and fewer
+    communication components.
+    \item Soprano-only and all-voice Magenta inputs remain selectable from the
+    integrated interface.
+    \item The influence of the input notes was adjusted so that Magenta's audio
+    follows the Markov-generated pitches and timing more clearly.
+    \item Movement changes can now be heard through the complete chain from
+    gesture, to Markov output, to Magenta-generated audio.
+    \item Soprano Performance mode now includes a compact piano-roll view,
+    while Full SATB mode retains the four-voice score.
+\end{itemize}
+
+\section{Challenges}
+
+The direct Magenta design depends on the virtual MIDI port created by the
+official standalone application. The port is available only after Magenta is
+running and a compatible model setup is ready. The project must also use a
+different MIDI output for its immediate synthesized sound; otherwise the
+ordinary performance output could be sent to the Magenta input by mistake.
+
+Although the current pipeline works well, Magenta RealTime leaves limited room
+for further technical exploration inside the generation stage. The project can
+select the input notes, adjust their influence, choose between soprano and all
+voices, and change the text prompt. After that, Magenta's pretrained model
+performs the remaining audio generation internally. Its musical decisions and
+generation process are not directly controlled by this project.
+
+This creates a practical limitation for future development: further Magenta
+work would mainly involve changing the notes and settings supplied to an
+existing model, rather than designing or modifying the generation process
+itself. Future work may therefore be more valuable if it focuses on the
+movement mapping, the Markov model, or another accompaniment method that
+offers more direct control over its musical behavior.
+
+Although direct MIDI removes unnecessary communication steps, the perceived
+response still depends on camera capture, MediaPipe tracking, the next musical
+tick, MIDI synthesis, and Magenta inference. These delays must be measured
+separately to determine which parts most affect the performer's experience.
+
+\section{Next Steps}
+
+\begin{itemize}
+    \item Replace camera-based computer vision with wearable sensor-based
+    movement detection. This would remove the system's dependence on lighting,
+    camera position, visibility, and reliable MediaPipe tracking.
+    \item Collect and stream accelerometer data from four smartwatches worn by
+    one performer: one on each hand and one on each leg. The sensor signals
+    would be filtered, normalized, and converted into continuous movement
+    features for the realtime music model.
+    \item Develop a musically logical mapping between the four limbs and the
+    model's parameters. Hand movement can control melodic and expressive
+    features, while leg movement can control rhythmic pulse, tempo, accents,
+    or larger structural changes. The exact mapping should keep each gesture
+    understandable and give the performer clear audible feedback.
+\end{itemize}
+
+\section{Resources}
+
+\begin{itemize}
+    \item Project repository:
+    \url{https://github.com/YorgoAzzi/MarkovModel}
+    \item Magenta RealTime 2 repository:
+    \url{https://github.com/magenta/magenta-realtime}
+    \item Magenta standalone application documentation:
+    \url{https://github.com/magenta/magenta-realtime/blob/main/docs/apps/standalone_app.md}
+    \item Qt documentation:
+    \url{https://doc.qt.io/qt-5/}
+\end{itemize}
+
+\end{document}

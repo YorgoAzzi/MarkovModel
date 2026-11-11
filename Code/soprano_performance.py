@@ -235,6 +235,14 @@ class SopranoGestureController:
                 self.pending_scale_steps = 0
                 self.trill_active = False
 
+    def queue_scale_steps(self, steps: int) -> None:
+        """Queue externally detected scale motion, used by Conductor mode."""
+        with self.lock:
+            self.pending_scale_steps = max(
+                -8,
+                min(8, self.pending_scale_steps + int(steps)),
+            )
+
     def synchronize(
         self,
         *,

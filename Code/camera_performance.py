@@ -36,8 +36,15 @@ def _audio_loop(engine, player, stop_event, log_every, observers=()):
                 was_paused = False
             started = time.perf_counter()
             revision = getattr(engine, "revision", None)
-            frame = engine.generate_tick()
+            event_driven = bool(getattr(engine, "event_driven", False))
+            if event_driven and hasattr(engine, "wait_for_frame"):
+                frame = engine.wait_for_frame(stop_event, timeout=0.05)
+            else:
+                frame = engine.generate_tick()
             generation_ms = (time.perf_counter() - started) * 1000.0
+            if frame is None:
+                deadline = time.perf_counter()
+                continue
             if revision is not None and revision != engine.revision:
                 deadline = time.perf_counter()
                 continue
@@ -63,6 +70,9 @@ def _audio_loop(engine, player, stop_event, log_every, observers=()):
                     f"rhythm={frame.sampled_duration_beats:g}beat"
                 )
             generated += 1
+            if event_driven:
+                deadline = time.perf_counter()
+                continue
             deadline += engine.tick_seconds
             remaining = deadline - time.perf_counter()
             if remaining > 0:

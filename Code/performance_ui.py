@@ -14,9 +14,9 @@ except ImportError as exc:
     ) from exc
 
 try:
-    from performance_session import MODE_FULL, MODE_SOPRANO
+    from performance_session import MODE_CONDUCTOR, MODE_FULL, MODE_SOPRANO
 except ModuleNotFoundError:
-    from .performance_session import MODE_FULL, MODE_SOPRANO
+    from .performance_session import MODE_CONDUCTOR, MODE_FULL, MODE_SOPRANO
 
 try:
     from magenta_router import INPUT_ALL, INPUT_SOPRANO
@@ -317,24 +317,28 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         buttons = QtWidgets.QHBoxLayout()
         self.full_button = QtWidgets.QPushButton("Full SATB  [1]")
         self.soprano_button = QtWidgets.QPushButton("Soprano Performance  [2]")
+        self.conductor_button = QtWidgets.QPushButton("Conductor  [3]")
         self.transport_button = QtWidgets.QPushButton("Pause  [Space]")
         for button in (
             self.full_button,
             self.soprano_button,
+            self.conductor_button,
             self.transport_button,
         ):
             button.setSizePolicy(
                 QtWidgets.QSizePolicy.Ignored,
                 QtWidgets.QSizePolicy.Fixed,
             )
-        for button in (self.full_button, self.soprano_button):
+        for button in (self.full_button, self.soprano_button, self.conductor_button):
             button.setCheckable(True)
         group = QtWidgets.QButtonGroup(self)
         group.setExclusive(True)
         group.addButton(self.full_button)
         group.addButton(self.soprano_button)
+        group.addButton(self.conductor_button)
         buttons.addWidget(self.full_button)
         buttons.addWidget(self.soprano_button)
+        buttons.addWidget(self.conductor_button)
         buttons.addWidget(self.transport_button)
         camera_layout.addLayout(buttons)
 
@@ -398,6 +402,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.soprano_button.clicked.connect(
             lambda: self.mode_requested.emit(MODE_SOPRANO)
         )
+        self.conductor_button.clicked.connect(
+            lambda: self.mode_requested.emit(MODE_CONDUCTOR)
+        )
         self.transport_button.clicked.connect(self.transport_requested.emit)
         self.magenta_button.toggled.connect(self.magenta_enabled_requested.emit)
         self.magenta_input.currentIndexChanged.connect(
@@ -423,6 +430,11 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             lambda: self.mode_requested.emit(MODE_SOPRANO),
         )
         QtWidgets.QShortcut(
+            QtGui.QKeySequence("3"),
+            self,
+            lambda: self.mode_requested.emit(MODE_CONDUCTOR),
+        )
+        QtWidgets.QShortcut(
             QtGui.QKeySequence("Space"), self, self.transport_requested.emit
         )
         QtWidgets.QShortcut(QtGui.QKeySequence("Q"), self, self.close)
@@ -442,7 +454,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     def follow_live(self):
         self._follow_live = True
-        if self._mode == MODE_SOPRANO:
+        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}:
             self.piano_roll.follow_live()
         else:
             bar = self.score_scroll.verticalScrollBar()
@@ -453,11 +465,15 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self._mode = mode
         self.full_button.setChecked(mode == MODE_FULL)
         self.soprano_button.setChecked(mode == MODE_SOPRANO)
+        self.conductor_button.setChecked(mode == MODE_CONDUCTOR)
+        melody_view = mode in {MODE_SOPRANO, MODE_CONDUCTOR}
         self.visual_stack.setCurrentWidget(
-            self.piano_roll if mode == MODE_SOPRANO else self.score_scroll
+            self.piano_roll if melody_view else self.score_scroll
         )
         self.visual_title.setText(
-            "Soprano piano roll" if mode == MODE_SOPRANO else "Live SATB score"
+            "Conducted melody" if mode == MODE_CONDUCTOR else (
+                "Soprano piano roll" if mode == MODE_SOPRANO else "Live SATB score"
+            )
         )
         if mode_changed and self._follow_live:
             QtCore.QTimer.singleShot(0, self.follow_live)
@@ -566,10 +582,14 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     def update_piano_roll(self, snapshot) -> None:
         """Refresh the soprano-only roll from a thread-safe model snapshot."""
-        if self._mode == MODE_SOPRANO:
+        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}:
             self.score_status.setText(snapshot["status"])
         changed = self.piano_roll.update_snapshot(snapshot)
-        if self._follow_live and changed and self._mode == MODE_SOPRANO:
+        if (
+            self._follow_live
+            and changed
+            and self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}
+        ):
             QtCore.QTimer.singleShot(0, self.follow_live)
 
     def closeEvent(self, event):

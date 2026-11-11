@@ -75,6 +75,25 @@ class ChordGesture:
     fingers: tuple[bool, bool, bool, bool, bool]
 
 
+@dataclass(frozen=True)
+class HandMotion:
+    detected: bool
+    speed: float = 0.0
+    acceleration: float = 0.0
+    peak: bool = False
+    vertical_velocity: float = 0.0
+
+
+@dataclass(frozen=True)
+class ConductorBeat:
+    triggered: bool
+    timestamp: float
+    hands: tuple[str, ...] = ()
+    strength: float = 0.0
+    simultaneous: bool = False
+    tempo_bpm: Optional[float] = None
+
+
 def palm_center(hand: HandObservation) -> tuple[float, float]:
     """Average the wrist and four knuckles to obtain a stable control point."""
     points = [hand.landmarks[index] for index in (0, 5, 9, 13, 17)]
@@ -520,6 +539,242 @@ class StableChordGesture:
         if changed:
             self._accepted = gesture
         return self._accepted, changed
+
+
+class HandAccelerationPeakDetector:
+    """Estimate palm acceleration and report intentional conducting strokes."""
+
+    def __init__(
+        self,
+        *,
+        acceleration_threshold: float = 2.5,
+        minimum_speed: float = 0.12,
+        velocity_time_constant: float = 0.045,
+        acceleration_time_constant: float = 0.035,
+        refractory_seconds: float = 0.18,
+        dropout_reset_seconds: float = 0.30,
+        downward_only: bool = True,
+    ):
+        self.acceleration_threshold = max(0.1, float(acceleration_threshold))
+        self.minimum_speed = max(0.0, float(minimum_speed))
+        self.velocity_time_constant = max(1e-4, float(velocity_time_constant))
+        self.acceleration_time_constant = max(
+            1e-4, float(acceleration_time_constant)
+        )
+        self.refractory_seconds = max(0.0, float(refractory_seconds))
+        self.dropout_reset_seconds = max(0.05, float(dropout_reset_seconds))
+        self.downward_only = bool(downward_only)
+        self.reset()
+
+    def reset(self) -> None:
+        self._last_timestamp: Optional[float] = None
+        self._last_position: Optional[tuple[float, float]] = None
+        self._velocity = np.zeros(2, dtype=float)
+        self._acceleration = 0.0
+        self._previous_acceleration = 0.0
+        self._previous_speed = 0.0
+        self._last_peak_timestamp = -1e9
+
+    def missing(self, timestamp: float) -> HandMotion:
+        timestamp = float(timestamp)
+        if (
+            self._last_timestamp is not None
+            and timestamp - self._last_timestamp >= self.dropout_reset_seconds
+        ):
+            self.reset()
+        return HandMotion(
+            False,
+            float(np.linalg.norm(self._velocity)),
+            0.0,
+            False,
+            float(self._velocity[1]),
+        )
+
+    def update(self, hand: HandObservation, timestamp: float) -> HandMotion:
+        timestamp = float(timestamp)
+        position = palm_center(hand)
+        if self._last_timestamp is None or self._last_position is None:
+            self._last_timestamp = timestamp
+            self._last_position = position
+            return HandMotion(True)
+
+        dt = timestamp - self._last_timestamp
+        if dt <= 1e-4 or dt >= self.dropout_reset_seconds:
+            self.reset()
+            self._last_timestamp = timestamp
+            self._last_position = position
+            return HandMotion(True)
+
+        raw_velocity = np.asarray(
+            (
+                (position[0] - self._last_position[0]) / dt,
+                (position[1] - self._last_position[1]) / dt,
+            ),
+            dtype=float,
+        )
+        velocity_alpha = 1.0 - math.exp(-dt / self.velocity_time_constant)
+        previous_velocity = self._velocity.copy()
+        self._velocity += velocity_alpha * (raw_velocity - self._velocity)
+        raw_acceleration = float(np.linalg.norm(self._velocity - previous_velocity) / dt)
+        acceleration_alpha = 1.0 - math.exp(
+            -dt / self.acceleration_time_constant
+        )
+        acceleration = self._acceleration + acceleration_alpha * (
+            raw_acceleration - self._acceleration
+        )
+        speed = float(np.linalg.norm(self._velocity))
+
+        # A local maximum is reported one camera frame after its top. This is
+        # more resistant to MediaPipe landmark jitter than a threshold crossing.
+        # The old velocity belongs to that maximum's frame. MediaPipe image y
+        # increases downward, so a positive y velocity identifies a downstroke.
+        downstroke = previous_velocity[1] >= self.minimum_speed
+        peak = (
+            self._acceleration >= self.acceleration_threshold
+            and self._acceleration > self._previous_acceleration
+            and self._acceleration >= acceleration
+            and self._previous_speed >= self.minimum_speed
+            and (not self.downward_only or downstroke)
+            and timestamp - self._last_peak_timestamp >= self.refractory_seconds
+        )
+        reported_acceleration = self._acceleration if peak else acceleration
+        if peak:
+            self._last_peak_timestamp = timestamp
+
+        self._previous_acceleration = self._acceleration
+        self._previous_speed = speed
+        self._acceleration = acceleration
+        self._last_timestamp = timestamp
+        self._last_position = position
+        return HandMotion(
+            True,
+            speed,
+            reported_acceleration,
+            peak,
+            float(self._velocity[1]),
+        )
+
+
+class RightHandConductor:
+    """Convert intentional right-palm acceleration peaks into musical beats."""
+
+    def __init__(
+        self,
+        *,
+        acceleration_threshold: float = 2.5,
+        minimum_speed: float = 0.12,
+        hand_refractory_seconds: float = 0.18,
+        minimum_tempo: float = 35.0,
+        maximum_tempo: float = 200.0,
+        tempo_smoothing: float = 0.35,
+        downward_only: bool = True,
+    ):
+        self.detector = HandAccelerationPeakDetector(
+            acceleration_threshold=acceleration_threshold,
+            minimum_speed=minimum_speed,
+            refractory_seconds=hand_refractory_seconds,
+            downward_only=downward_only,
+        )
+        self.minimum_tempo = max(1.0, float(minimum_tempo))
+        self.maximum_tempo = max(self.minimum_tempo, float(maximum_tempo))
+        self.tempo_smoothing = _clamp(tempo_smoothing, 0.0, 1.0)
+        self._last_beat_timestamp: Optional[float] = None
+        self._tempo_bpm: Optional[float] = None
+
+    def reset(self) -> None:
+        self.detector.reset()
+        self._last_beat_timestamp = None
+        self._tempo_bpm = None
+
+    def update(
+        self,
+        right_hand: Optional[HandObservation],
+        timestamp: float,
+    ) -> tuple[ConductorBeat, HandMotion]:
+        timestamp = float(timestamp)
+        motion = (
+            self.detector.update(right_hand, timestamp)
+            if right_hand is not None
+            else self.detector.missing(timestamp)
+        )
+        if not motion.peak:
+            return ConductorBeat(False, timestamp), motion
+
+        tempo = self._tempo_bpm
+        if self._last_beat_timestamp is not None:
+            interval = timestamp - self._last_beat_timestamp
+            if interval > 1e-4:
+                measured = _clamp(
+                    60.0 / interval,
+                    self.minimum_tempo,
+                    self.maximum_tempo,
+                )
+                tempo = (
+                    measured
+                    if tempo is None
+                    else tempo + self.tempo_smoothing * (measured - tempo)
+                )
+                self._tempo_bpm = tempo
+        strength = _clamp(
+            motion.acceleration / (self.detector.acceleration_threshold * 3.0),
+            0.0,
+            1.0,
+        )
+        self._last_beat_timestamp = timestamp
+        return (
+            ConductorBeat(
+                True,
+                timestamp,
+                hands=("right",),
+                strength=strength,
+                simultaneous=False,
+                tempo_bpm=tempo,
+            ),
+            motion,
+        )
+
+
+class HandMelodyHeight:
+    """Convert one hand's vertical displacement since the beat into scale steps."""
+
+    def __init__(self, movement_step: float = 0.032, max_steps: int = 8):
+        self.movement_step = max(0.008, float(movement_step))
+        self.max_steps = max(1, int(max_steps))
+        self.reset()
+
+    def reset(self) -> None:
+        self._active = False
+        self._baseline: Optional[float] = None
+        self._emitted_steps = 0
+
+    def start_beat(self, hand_y: Optional[float]) -> None:
+        self._active = True
+        self._baseline = None if hand_y is None else float(hand_y)
+        self._emitted_steps = 0
+
+    @staticmethod
+    def _whole_steps(value: float) -> int:
+        return math.floor(value) if value >= 0.0 else math.ceil(value)
+
+    def update(self, hand_y: Optional[float]) -> tuple[int, ...]:
+        if not self._active or hand_y is None:
+            return ()
+        if self._baseline is None:
+            self._baseline = float(hand_y)
+            return ()
+        # Image y decreases as the hand moves up, hence baseline - y.
+        steps = self._whole_steps(
+            (self._baseline - float(hand_y)) / self.movement_step
+        )
+        target = max(-self.max_steps, min(self.max_steps, steps))
+        difference = target - self._emitted_steps
+        if difference == 0:
+            return ()
+        direction = 1 if difference > 0 else -1
+        # Emit at most one pitch per camera frame so a large movement becomes
+        # an audible scale rather than several zero-delay MIDI replacements.
+        self._emitted_steps += direction
+        return (direction,)
 
 
 def hand_by_side(

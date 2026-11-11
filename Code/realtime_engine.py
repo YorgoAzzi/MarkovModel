@@ -758,3 +758,14 @@ class RealtimeChoraleEngine:
         )
         self.tick_index += 1
         return result
+
+    def generate_conducted_beat(self) -> GeneratedTick:
+        """Advance exactly one performer-commanded beat and force an onset."""
+        remainder = self.tick_index % self.ticks_per_beat
+        if remainder:
+            self.tick_index += self.ticks_per_beat - remainder
+        # Preserve beam history for voice leading while making every accepted
+        # conducting peak audible immediately.
+        self.current_sonority = None
+        self.ticks_since_note = 0
+        return self.generate_tick()

@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "Code"))
 
 from PyQt5 import QtWidgets
 from magenta_router import INPUT_ALL
-from performance_session import MODE_FULL, MODE_SOPRANO
+from performance_session import MODE_CONDUCTOR, MODE_FULL, MODE_SOPRANO
 from piano_roll import PianoRollNote
 from performance_ui import IntegratedPerformanceWindow, qt_compatible_svg
 
@@ -81,6 +81,11 @@ class IntegratedWindowTests(unittest.TestCase):
             self.assertEqual(window.visual_title.text(), "Live SATB score")
             self.assertEqual(window.score_status.text(), "Measure 1")
             self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
+
+            window.set_state(mode=MODE_CONDUCTOR, playing=True, summary="conduct")
+            self.assertTrue(window.conductor_button.isChecked())
+            self.assertEqual(window.visual_title.text(), "Conducted melody")
+            self.assertIs(window.visual_stack.currentWidget(), window.piano_roll)
         finally:
             window.close()
 

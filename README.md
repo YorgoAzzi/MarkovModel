@@ -225,7 +225,7 @@ to test tracking without sending MIDI.
 
 The two-hand interface uses MediaPipe landmarks while OpenCV continues to
 capture and display the webcam image. The official hand model is stored at
-`models/hand_landmarker.task`. It now has two modes that can be changed without
+`models/hand_landmarker.task`. It has three modes that can be changed without
 restarting the performance.
 
 **Full SATB mode** keeps the original interface:
@@ -260,6 +260,23 @@ chord.
   speed controls tempo; openness controls articulation.
 - Chord gestures are disabled in this mode.
 
+**Conductor mode** makes generation event-driven:
+
+- A smoothed acceleration peak during a downward right-hand stroke advances
+  the accompaniment by one beat. Left-hand acceleration, upward recovery, and
+  sideways motion are ignored. Without an accepted right-hand downstroke, the
+  current notes remain sustained and the Markov engine does not advance.
+- The time between accepted peaks estimates the performance tempo.
+- Right-hand finger patterns select all seven degrees: index, index+middle,
+  index+middle+ring, index+middle+ring+pinky, all five fingers, thumb, and
+  thumb+index select degrees 1 through 7 respectively.
+- At every accepted beat, the current chord gesture is sampled and applied as
+  a diatonic chord in the selected key and mode. An unmapped gesture holds the
+  previous degree.
+- Until the next beat, moving the left hand upward or downward produces
+  successive ascending or descending soprano scale notes. Right-hand height
+  does not affect the melody.
+
 Forward/backward brightness control has been removed from the hand interface.
 
 Start the interface with:
@@ -268,10 +285,11 @@ Start the interface with:
 python "Code/hand_performance.py" --tempo 60 --max-tempo 140 --key C --mode major
 ```
 
-Click **Full SATB** or **Soprano Performance** at the bottom of the camera
-window to switch modes. Click **Pause/Play** to stop or resume generation while
-hand tracking continues. Keyboard shortcuts are `1`, `2`, and Space. You can
-start directly in the second mode with `--performance-mode soprano`.
+Click **Full SATB**, **Soprano Performance**, or **Conductor** at the bottom of
+the camera window to switch modes. Click **Pause/Play** to stop or resume
+generation while hand tracking continues. Keyboard shortcuts are `1`, `2`,
+`3`, and Space. Start directly in a mode with `--performance-mode soprano` or
+`--performance-mode conductor`.
 
 The hand interface runs the musical clock at 16 ticks per beat. Soprano scale
 steps can therefore reach the scheduler on the next fine tick. A stationary
@@ -280,14 +298,20 @@ or mode change ends it immediately. Use `--soprano-step` to change how much
 vertical travel produces one scale step, `--pinch-distance` to tune pinch
 detection, `--trill-shake-speed` to tune the trill, and `--timbre-dwell` to
 control how long a finger count must remain stable before the sound changes.
+In Conductor mode, tune peak sensitivity with `--conductor-acceleration` and
+`--conductor-min-speed`. Lower either value if deliberate strokes are missed;
+raise them if ordinary movement produces beats. `--conductor-refractory`
+prevents repeated peaks from one stroke. Downward-only detection is enabled by
+default; `--conductor-any-direction` allows right-hand peaks in any direction
+for comparison.
 
 ### Live music visualization
 
 The PyQt performance window places the camera and a mode-specific music view
 side by side. **Full SATB mode** shows the existing four-voice score: soprano
 and alto on the treble staff, tenor and bass on the bass staff, with the current
-sonority in red. **Soprano Performance mode** replaces that score with a
-soprano-only piano roll. Pitch runs vertically and time runs horizontally;
+sonority in red. **Soprano Performance** and **Conductor** modes replace that
+score with a soprano-only piano roll. Pitch runs vertically and time runs horizontally;
 blue blocks are previous notes, green is the active note, orange marks short
 ornaments, and a red line is the current playhead. A stationary hand produces
 one block that grows continuously until movement changes or releases the note.
@@ -296,7 +320,7 @@ Both views retain their complete history. Four measures are visible by default,
 and older material remains available by scrolling. The display follows the
 newest music until you scroll backward; the **Follow live** button returns to
 the current position. Alto, tenor, and bass continue playing in Soprano
-Performance mode but do not appear in its piano roll.
+Performance and Conductor modes but do not appear in the piano roll.
 
 Music playback does not wait for notation. Generated onsets enter a queue, and
 a background worker converts them through `music21` to MusicXML and Verovio to

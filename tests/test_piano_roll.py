@@ -17,6 +17,7 @@ def frame(
     released=False,
     sustained=False,
     duration=8,
+    tick_index=0,
 ):
     return SimpleNamespace(
         pitches={"soprano": pitch},
@@ -26,6 +27,7 @@ def frame(
         sustained_voices=frozenset({"soprano"} if sustained else ()),
         voice_duration_ticks={"soprano": duration} if onset else {},
         planned_duration_ticks=duration,
+        tick_index=tick_index,
     )
 
 
@@ -75,6 +77,22 @@ class SopranoPianoRollTests(unittest.TestCase):
 
         self.assertTrue(note.ornament)
         self.assertEqual(note.end_tick, 2)
+
+    def test_conductor_source_ticks_preserve_beat_spacing(self):
+        roll = SopranoPianoRoll(ticks_per_beat=16)
+        roll.observe(
+            frame(onset=True, sustained=True, tick_index=0),
+            enabled=True,
+            use_source_ticks=True,
+        )
+        roll.observe(
+            frame(sustained=True, tick_index=16),
+            enabled=True,
+            use_source_ticks=True,
+        )
+
+        note = roll.snapshot()["notes"][0]
+        self.assertEqual((note.start_tick, note.end_tick), (0, 17))
 
 
 if __name__ == "__main__":

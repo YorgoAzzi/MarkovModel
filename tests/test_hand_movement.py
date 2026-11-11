@@ -13,6 +13,8 @@ from hand_movement import (
     LeftHandControlExtractor,
     Point3D,
     StableChordGesture,
+    HandAccelerationPeakDetector,
+    HandMelodyHeight,
     TiltQualityClassifier,
     chord_degree_for_fingers,
     chord_quality_for_tilt,
@@ -169,6 +171,66 @@ class LeftHandTests(unittest.TestCase):
         self.assertTrue(is_pinching(with_tip_distance(0.03), threshold=0.42))
         self.assertFalse(is_pinching(with_tip_distance(0.20), threshold=0.42))
 
+
+class ConductorMovementTests(unittest.TestCase):
+    @staticmethod
+    def _peak_count(detector, positions):
+        base = hand_with_direction(0.5, 0.5)
+        return sum(
+            detector.update(
+                shifted_hand(base, dx=x - 0.5, dy=y - 0.5),
+                index * 0.033,
+            ).peak
+            for index, (x, y) in enumerate(positions)
+        )
+
+    @staticmethod
+    def _detector(**overrides):
+        settings = dict(
+            acceleration_threshold=1.0,
+            minimum_speed=0.05,
+            velocity_time_constant=0.02,
+            acceleration_time_constant=0.02,
+            refractory_seconds=0.20,
+        )
+        settings.update(overrides)
+        return HandAccelerationPeakDetector(**settings)
+
+    def test_acceleration_local_maximum_produces_one_peak(self):
+        positions = [(0.5, y) for y in (0.50, 0.51, 0.54, 0.59, 0.65, 0.67)]
+        self.assertEqual(self._peak_count(self._detector(), positions), 1)
+
+    def test_upward_acceleration_does_not_produce_a_downstroke_peak(self):
+        positions = [(0.5, y) for y in (0.67, 0.66, 0.63, 0.58, 0.52, 0.50)]
+        self.assertEqual(self._peak_count(self._detector(), positions), 0)
+
+    def test_sideways_acceleration_does_not_produce_a_downstroke_peak(self):
+        positions = [(x, 0.5) for x in (0.50, 0.51, 0.54, 0.59, 0.65, 0.67)]
+        self.assertEqual(self._peak_count(self._detector(), positions), 0)
+
+    def test_any_direction_option_accepts_an_upward_peak(self):
+        positions = [(0.5, y) for y in (0.67, 0.66, 0.63, 0.58, 0.52, 0.50)]
+        detector = self._detector(downward_only=False)
+        self.assertEqual(self._peak_count(detector, positions), 1)
+
+    def test_downward_only_is_the_interface_default(self):
+        self.assertTrue(parse_args([]).conductor_downward_only)
+        self.assertFalse(
+            parse_args(["--conductor-any-direction"]).conductor_downward_only
+        )
+
+    def test_single_melody_hand_moving_up_makes_one_scale_step(self):
+        melody = HandMelodyHeight(movement_step=0.03)
+        melody.start_beat(0.60)
+
+        self.assertEqual(melody.update(0.565), (1,))
+        self.assertEqual(melody.update(0.565), ())
+
+    def test_single_melody_hand_moving_down_descends_scale(self):
+        melody = HandMelodyHeight(movement_step=0.03)
+        melody.start_beat(0.50)
+
+        self.assertEqual(melody.update(0.54), (-1,))
 
 if __name__ == "__main__":
     unittest.main()
