@@ -12,11 +12,24 @@ from realtime_engine import (
     MovementBiasedDurationSampler,
     RealtimeChoraleEngine,
     SmoothedControlState,
+    _enumerate_accompaniment_candidates,
     chord_token_for_control,
 )
 
 
 class ControlTests(unittest.TestCase):
+    def test_hand_spacing_changes_the_selected_accompaniment_span(self):
+        candidates = {
+            "bass": [40, 43, 47], "tenor": [52, 55, 59],
+            "alto": [60, 64, 67],
+        }
+        arguments = (candidates, None, {"bass": 43, "tenor": 55, "alto": 64},
+                     24, {"bass": 0, "tenor": 0, "alto": 0}, 1.0)
+        narrow = _enumerate_accompaniment_candidates(*arguments, 0.0)[0][0]
+        wide = _enumerate_accompaniment_candidates(*arguments, 1.0)[0][0]
+        self.assertLess(narrow["alto"] - narrow["bass"],
+                        wide["alto"] - wide["bass"])
+
     def test_controls_are_clamped_smoothed_and_accent_is_one_shot(self):
         controls = SmoothedControlState(smoothing=1.0)
         controls.update(

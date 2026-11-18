@@ -62,6 +62,9 @@ class SopranoGestureController:
         self._reset_motion_state()
 
     def _reset_motion_state(self) -> None:
+        self._conductor_muted = False
+        self._conductor_phrase_start: Optional[int] = None
+        self._conductor_last_kind = None
         self.last_x: Optional[float] = None
         self.last_y: Optional[float] = None
         self.last_motion_timestamp: Optional[float] = None
@@ -242,6 +245,79 @@ class SopranoGestureController:
                 -8,
                 min(8, self.pending_scale_steps + int(steps)),
             )
+
+    def conductor_note(
+        self,
+        *,
+        direction: int = 0,
+        gesture: tuple[str, int] | None = None,
+        chord: tuple[int, str, float] | None = None,
+        ticks_per_beat: int = 16,
+    ) -> SopranoStep:
+        """Play one conductor melody command, independent of Soprano mode poses."""
+        with self.lock:
+            if self._conductor_muted:
+                return SopranoStep(None, False, False, max(1, ticks_per_beat * 4),
+                                   "fist/mute")
+            base = self.active_pitch
+            if base is None:
+                base = self.scale[self.scale_index]
+            pitch = base
+            kind, size = gesture or ("scale", 1)
+            if direction:
+                if kind == "arpeggio" and self._conductor_last_kind != "arpeggio":
+                    self._conductor_phrase_start = base
+                self._conductor_last_kind = kind
+                sign = 1 if direction > 0 else -1
+                if kind == "semitone":
+                    pitch = base + sign
+                else:
+                    if kind == "arpeggio" and chord is not None:
+                        allowed = set(core._chord_token_to_pitch_classes(
+                            int(chord[0]), str(chord[1])
+                        ))
+                    else:
+                        allowed = set(core._build_scale_pitch_classes(self.key, self.mode))
+                    for _ in range(size):
+                        candidates = range(pitch + sign, 97 if sign > 0 else 47, sign)
+                        pitch = next((p for p in candidates if p % 12 in allowed), pitch)
+            pitch = max(48, min(96, pitch))
+            onset = pitch != self.active_pitch or self.force_onset
+            self.active_pitch = pitch
+            self.force_onset = False
+            self.gesture = (
+                "arpeggio" if kind == "arpeggio" and direction else
+                "semitone" if kind == "semitone" and direction else
+                f"scale jump {size}" if direction else "holding"
+            )
+            return SopranoStep(pitch, onset, False, max(1, ticks_per_beat * 4),
+                               self.gesture, sustain=True)
+
+    def conductor_mute(self, muted: bool, *, ticks_per_beat: int = 16) -> SopranoStep:
+        """Silence the soprano; restore the arpeggio start after repositioning."""
+        with self.lock:
+            duration = max(1, ticks_per_beat * 4)
+            if muted:
+                if not self._conductor_muted and self._conductor_phrase_start is None:
+                    self._conductor_phrase_start = self.active_pitch
+                released = self.active_pitch is not None
+                self._conductor_muted = True
+                self.active_pitch = None
+                self.force_onset = False
+                self._conductor_last_kind = None
+                self.gesture = "fist/mute"
+                return SopranoStep(None, False, released, duration, self.gesture)
+            if not self._conductor_muted:
+                return SopranoStep(self.active_pitch, False, False, duration, self.gesture,
+                                   sustain=self.active_pitch is not None)
+            self._conductor_muted = False
+            pitch = self._conductor_phrase_start
+            if pitch is None:
+                pitch = self.scale[self.scale_index]
+            self.active_pitch = pitch
+            self.force_onset = False
+            self.gesture = "phrase restart"
+            return SopranoStep(pitch, True, False, duration, self.gesture, sustain=True)
 
     def synchronize(
         self,

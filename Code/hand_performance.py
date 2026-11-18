@@ -20,11 +20,14 @@ from hand_movement import (
     StableChordGesture,
     TiltQualityClassifier,
     chord_degree_for_fingers,
+    conductor_melody_gesture,
     extended_fingers,
     finger_extension_amount,
     hand_by_side,
     hand_tilt_degrees,
     height_to_register,
+    hand_distance_control,
+    ConductorTiltStepDetector,
     is_pinching,
     palm_center,
     HandMelodyHeight,
@@ -336,6 +339,16 @@ def main():
         downward_only=args.conductor_downward_only,
     )
     conductor_melody = HandMelodyHeight(args.soprano_step)
+    conductor_tilt = ConductorTiltStepDetector()
+    beat_finger_filter = FingerStateFilter()
+    melody_finger_filter = FingerStateFilter()
+    roles_swapped = False
+    beat_fingers = (False,) * 5
+    melody_fingers = (False,) * 5
+    melody_muted = False
+    distance_control = 0.5
+    last_expression_value = None
+    last_expression_time = -1.0
     live_score = None
     piano_roll = None
     if not args.no_live_score:
@@ -385,7 +398,8 @@ def main():
     print("Full SATB: left controls activity/tempo/articulation; right controls register/chords.")
     print("Soprano Performance: left controls accompaniment register/tempo/articulation; right performs soprano.")
     print("Conductor: a right-hand downward acceleration peak advances a beat and right fingers select chords 1-7.")
-    print("Conductor melody: left-hand height alone performs successive soprano scale notes.")
+    print("Conductor melody: height sets direction; thumb arpeggiates, fist mutes, left/right tilt moves one semitone.")
+    print("Hand separation controls expression and accompaniment spacing; Swap hand roles or H exchanges roles.")
     print("Soprano fingers: 1=piano, 2=violin, 3=choir, 4=flute, 5=synth pad; shake=trill, index tap=mordent.")
     print("Magenta: use the window controls to enable accompaniment and select soprano/all input.")
     print("Press Q or Escape to stop.")
@@ -399,6 +413,7 @@ def main():
     window = IntegratedPerformanceWindow(show_score=live_score is not None)
     window.mode_requested.connect(pending_actions.append)
     window.transport_requested.connect(lambda: pending_actions.append("transport"))
+    window.swap_roles_requested.connect(lambda: pending_actions.append("swap_roles"))
     window.magenta_enabled_requested.connect(
         lambda enabled: pending_actions.append(("magenta_enabled", bool(enabled)))
     )
@@ -411,6 +426,7 @@ def main():
         playing=session.is_playing,
         summary="Initializing hand tracking...",
     )
+    window.set_swap_roles(roles_swapped)
     window.set_magenta_state(
         enabled=magenta.enabled,
         input_mode=magenta.input_mode,
@@ -446,10 +462,15 @@ def main():
                     chord_stabilizer = StableChordGesture(args.gesture_dwell)
                     conductor.reset()
                     conductor_melody.reset()
+                    conductor_tilt.reset()
+                    beat_finger_filter = FingerStateFilter()
+                    melody_finger_filter = FingerStateFilter()
+                    melody_muted = False
                     conductor_motion = None
                     last_conductor_beat = None
                     conductor_degree = None
                     candidate_gesture = None
+                    engine.update_controls(volume=0.7, spacing=0.5)
                     if action == MODE_CONDUCTOR:
                         engine.update_controls(
                             tilt=0.0,
@@ -465,7 +486,19 @@ def main():
                         player.stop_all()
                     conductor.reset()
                     conductor_melody.reset()
+                    conductor_tilt.reset()
                     print("Playing" if playing else "Paused")
+                elif action == "swap_roles" and session.mode == MODE_CONDUCTOR:
+                    roles_swapped = not roles_swapped
+                    window.set_swap_roles(roles_swapped)
+                    conductor.reset()
+                    conductor_melody.reset()
+                    conductor_tilt.reset()
+                    beat_finger_filter = FingerStateFilter()
+                    melody_finger_filter = FingerStateFilter()
+                    melody_muted = False
+                    last_conductor_beat = None
+                    print("Conductor roles swapped" if roles_swapped else "Conductor roles restored")
                 elif isinstance(action, tuple) and action[0] == "magenta_enabled":
                     enabled = magenta.set_enabled(action[1])
                     print("Magenta accompaniment on" if enabled else "Magenta accompaniment off")
@@ -502,7 +535,6 @@ def main():
                         result.timestamp,
                     )
 
-                left_y = None if left_hand is None else palm_center(left_hand)[1]
                 if session.mode == MODE_FULL:
                     engine.update_controls(
                         rotation=latest_left.melodic_activity,
@@ -559,11 +591,55 @@ def main():
                     else:
                         soprano.missing(result.timestamp)
                 else:
+                    beat_hand = left_hand if roles_swapped else right_hand
+                    melody_hand = right_hand if roles_swapped else left_hand
+                    if beat_hand is None:
+                        beat_fingers = beat_finger_filter.missing(result.timestamp)
+                    else:
+                        beat_fingers = beat_finger_filter.update(
+                            extended_fingers(beat_hand, straight_angle=args.finger_angle,
+                                             thumb_spread_ratio=args.thumb_spread),
+                            result.timestamp,
+                        )
+                    if melody_hand is None:
+                        melody_fingers = melody_finger_filter.missing(result.timestamp)
+                        melody_y = None
+                        conductor_tilt.reset()
+                    else:
+                        melody_fingers = melody_finger_filter.update(
+                            extended_fingers(melody_hand, straight_angle=args.finger_angle,
+                                             thumb_spread_ratio=args.thumb_spread),
+                            result.timestamp,
+                        )
+                        _, melody_y = palm_center(melody_hand)
+                    melody_gesture = conductor_melody_gesture(melody_fingers)
+                    fist_now = (
+                        melody_gesture == ("mute", 0)
+                        if melody_hand is not None else melody_muted
+                    )
+                    mute_changed = fist_now != melody_muted
+                    if mute_changed:
+                        melody_muted = fist_now
+                        conductor_melody.start_beat(melody_y)
+                        conductor_tilt.reset()
+                        if session.is_playing:
+                            session.request_conductor_mute(fist_now, timestamp=result.timestamp)
+                    if left_hand is not None and right_hand is not None:
+                        distance_control = hand_distance_control(left_hand, right_hand)
+                        if (last_expression_value is None
+                            or abs(distance_control - last_expression_value) >= 0.025
+                            or result.timestamp - last_expression_time >= 0.12):
+                            session.request_conductor_expression(
+                                0.25 + 0.65 * distance_control, distance_control,
+                                timestamp=result.timestamp,
+                            )
+                            last_expression_value = distance_control
+                            last_expression_time = result.timestamp
                     beat, conductor_motion = conductor.update(
-                        right_hand, result.timestamp
+                        beat_hand, result.timestamp
                     )
                     if beat.triggered and session.is_playing:
-                        sampled_degree = chord_degree_for_fingers(stable_fingers)
+                        sampled_degree = chord_degree_for_fingers(beat_fingers)
                         if sampled_degree is not None:
                             conductor_degree = sampled_degree
                         session.request_conductor_beat(
@@ -572,8 +648,9 @@ def main():
                             simultaneous=beat.simultaneous,
                             tempo_bpm=beat.tempo_bpm,
                             timestamp=beat.timestamp,
+                            muted=melody_muted,
                         )
-                        conductor_melody.start_beat(left_y)
+                        conductor_melody.start_beat(melody_y)
                         last_conductor_beat = beat
                         conductor_beat_count += 1
                         print(
@@ -582,12 +659,22 @@ def main():
                             f"degree={conductor_degree or 'learned'} "
                             f"strength={beat.strength:.2f}"
                         )
-                    elif session.is_playing:
-                        for direction in conductor_melody.update(left_y):
-                            session.request_conductor_melody_step(
-                                direction,
-                                timestamp=result.timestamp,
-                            )
+                    elif session.is_playing and melody_hand is not None and not melody_muted:
+                        if not mute_changed:
+                            tilt_step = conductor_tilt.update(
+                                hand_tilt_degrees(melody_hand), result.timestamp)
+                            if tilt_step:
+                                session.request_conductor_melody_step(
+                                    tilt_step, timestamp=result.timestamp,
+                                    gesture=("semitone", 1))
+                                conductor_melody.start_beat(melody_y)
+                        if not mute_changed and not tilt_step:
+                            for direction in conductor_melody.update(melody_y):
+                                session.request_conductor_melody_step(
+                                    direction,
+                                    timestamp=result.timestamp,
+                                    gesture=melody_gesture,
+                                )
 
                 if session.mode == MODE_FULL:
                     accepted, changed = chord_stabilizer.update(
@@ -605,7 +692,10 @@ def main():
                 left_label = {
                     MODE_FULL: "LEFT: activity/tempo",
                     MODE_SOPRANO: "LEFT: accompaniment",
-                    MODE_CONDUCTOR: "LEFT: soprano melody",
+                    MODE_CONDUCTOR: (
+                        "LEFT: beat/chord degree 1-7" if roles_swapped
+                        else "LEFT: soprano melody"
+                    ),
                 }[session.mode]
                 _draw_hand(
                     cv2,
@@ -613,7 +703,8 @@ def main():
                     left_hand,
                     (255, 200, 0),
                     left_label,
-                    None,
+                    beat_fingers if session.mode == MODE_CONDUCTOR and roles_swapped
+                    else melody_fingers if session.mode == MODE_CONDUCTOR else None,
                 )
             if right_hand is not None:
                 _draw_hand(
@@ -624,13 +715,21 @@ def main():
                     {
                         MODE_FULL: "RIGHT: chord/register",
                         MODE_SOPRANO: "RIGHT: soprano",
-                        MODE_CONDUCTOR: "RIGHT: beat/chord degree 1-7",
+                        MODE_CONDUCTOR: (
+                            "RIGHT: soprano melody" if roles_swapped
+                            else "RIGHT: beat/chord degree 1-7"
+                        ),
                     }[session.mode],
-                    stable_fingers,
+                    melody_fingers if session.mode == MODE_CONDUCTOR and roles_swapped
+                    else beat_fingers if session.mode == MODE_CONDUCTOR
+                    else stable_fingers,
                 )
 
             if session.mode == MODE_CONDUCTOR:
-                finger_status = f"Right chord fingers={_finger_text(stable_fingers)}"
+                finger_status = (
+                    f"Chord={_finger_text(beat_fingers)} "
+                    f"melody={_finger_text(melody_fingers)}"
+                )
             else:
                 finger_status = (
                     f"Fingers raw={_finger_text(raw_fingers)} "
@@ -692,14 +791,14 @@ def main():
                 beat_hands = (
                     "none"
                     if last_conductor_beat is None
-                    else "+".join(last_conductor_beat.hands)
+                    else "left" if roles_swapped else "right"
                 )
                 left_status = (
                     f"Conducted beats={conductor_beat_count} "
                     f"tempo={engine.tempo_bpm:.0f} BPM last={beat_hands}"
                 )
                 right_status = (
-                    f"Right acceleration={right_acceleration:.2f} "
+                    f"Beat-hand acceleration={right_acceleration:.2f} "
                     f"threshold={args.conductor_acceleration:.2f}"
                 )
                 selected_status = (
@@ -708,11 +807,14 @@ def main():
                     else "Conducted chord: learned progression until a gesture is selected"
                 )
                 register_status = (
-                    f"Melody: {soprano_gesture} | MIDI pitch "
+                    f"Melody: {soprano_gesture} | "
+                    f"MIDI pitch "
                     f"{soprano_pitch if soprano_pitch is not None else 'waiting for first beat'}"
                 )
                 detail_status = (
-                    "Right downstroke=beat | left height=successive scale notes"
+                    f"{'Left' if roles_swapped else 'Right'} downstroke=beat | "
+                    f"{'right' if roles_swapped else 'left'} height/tilt=melody | "
+                    f"separation={distance_control:.2f}"
                 )
             mode_name = {
                 MODE_FULL: "FULL SATB",

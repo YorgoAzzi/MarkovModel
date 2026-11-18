@@ -276,6 +276,22 @@ chord.
 - Until the next beat, moving the left hand upward or downward produces
   successive ascending or descending soprano scale notes. Right-hand height
   does not affect the melody.
+- Melody-hand fingers choose the interval: index moves one scale note,
+  index+middle moves two scale notes, three extended fingers move three,
+  four move four, and all five move five. Thumb alone moves through the
+  current chord tones one note per vertical step (for C major, C upward
+  goes to E, G, C; C downward goes to G, E, C).
+- Tilting the melody hand right plays one semitone up; tilting left plays one
+  semitone down. Bring the hand upright before another tilt step. This can
+  reach pitches outside the selected scale.
+- A closed fist mutes the soprano and lets the performer return the hand to
+  its starting height in silence. Opening the fist restarts the note where
+  the arpeggio began, ready for another upward or downward run.
+- Moving the hands apart raises MIDI expression even on held notes and biases
+  the next accompaniment chord toward wider spacing. Bringing them together
+  lowers expression and brings the voices closer.
+- **Swap hand roles [H]** exchanges the beat/chord and melody hands while the
+  camera keeps running. It resets motion detection to avoid a false beat.
 
 Forward/backward brightness control has been removed from the hand interface.
 

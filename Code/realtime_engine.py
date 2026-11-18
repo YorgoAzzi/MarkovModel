@@ -28,6 +28,7 @@ class MovementControls:
     density: float = 0.0  # 0..1: longer to shorter generated notes
     volume: float = 0.7  # 0..1: quiet to loud MIDI dynamics
     tilt: float = 0.0  # -1..1: low to high register
+    spacing: float = 0.5  # 0..1: close to widely spaced accompaniment
     rotation: float = 0.0  # 0..1: narrow to wide melodic motion
     articulation: float = 0.9  # 0..1: short/staccato to sustained/legato
     brightness: float = 0.5  # 0..1: dark to bright MIDI timbre
@@ -76,6 +77,7 @@ def _partial_sonority_cost(
     voices,
     repeat_streaks,
     repeated_note_base_penalty,
+    spacing=0.5,
 ) -> float:
     """Voice-leading cost for a generated subset such as bass/tenor/alto."""
     score = 0.0
@@ -110,6 +112,10 @@ def _partial_sonority_cost(
                 score += 8.0
             elif perfect == "fifth":
                 score += 6.5
+    if voices == ACCOMPANIMENT_VOICES and abs(spacing - 0.5) > 0.05:
+        desired_span = 12 + 18 * spacing
+        actual_span = int(current["alto"]) - int(current["bass"])
+        score += 1.2 * abs(actual_span - desired_span)
     return float(score)
 
 
@@ -120,6 +126,7 @@ def _enumerate_accompaniment_candidates(
     limit,
     repeat_streaks,
     repeated_note_base_penalty,
+    spacing=0.5,
 ):
     """Enumerate ordered bass/tenor/alto sonorities without a hidden soprano."""
     scored = []
@@ -138,6 +145,7 @@ def _enumerate_accompaniment_candidates(
                     ACCOMPANIMENT_VOICES,
                     repeat_streaks,
                     repeated_note_base_penalty,
+                    spacing,
                 )
                 scored.append((cost, sonority))
     if not scored:
@@ -157,6 +165,7 @@ def _enumerate_accompaniment_candidates(
                             ACCOMPANIMENT_VOICES,
                             repeat_streaks,
                             repeated_note_base_penalty,
+                            spacing,
                         )
                         scored.append((cost, sonority))
     scored.sort(key=lambda item: item[0])
@@ -216,6 +225,7 @@ class SmoothedControlState:
         density: Optional[float] = None,
         volume: Optional[float] = None,
         tilt: Optional[float] = None,
+        spacing: Optional[float] = None,
         rotation: Optional[float] = None,
         articulation: Optional[float] = None,
         brightness: Optional[float] = None,
@@ -226,6 +236,7 @@ class SmoothedControlState:
                 density=self._target.density if density is None else _clamp(density, 0.0, 1.0),
                 volume=self._target.volume if volume is None else _clamp(volume, 0.0, 1.0),
                 tilt=self._target.tilt if tilt is None else _clamp(tilt, -1.0, 1.0),
+                spacing=self._target.spacing if spacing is None else _clamp(spacing, 0.0, 1.0),
                 rotation=self._target.rotation if rotation is None else _clamp(rotation, 0.0, 1.0),
                 articulation=(
                     self._target.articulation
@@ -249,6 +260,7 @@ class SmoothedControlState:
                 density=current.density + alpha * (target.density - current.density),
                 volume=current.volume + alpha * (target.volume - current.volume),
                 tilt=current.tilt + alpha * (target.tilt - current.tilt),
+                spacing=current.spacing + alpha * (target.spacing - current.spacing),
                 rotation=current.rotation + alpha * (target.rotation - current.rotation),
                 articulation=current.articulation + alpha * (
                     target.articulation - current.articulation
@@ -603,6 +615,11 @@ class RealtimeChoraleEngine:
                 register_target = centers[voice] + round(
                     register_span * controls.tilt
                 )
+                if self.generated_voices == ACCOMPANIMENT_VOICES:
+                    register_target += round(
+                        (controls.spacing - 0.5) * 14
+                        * {"bass": -1, "tenor": 0, "alto": 1}[voice]
+                    )
                 targets[voice] = int(
                     round(0.40 * moving_target + 0.60 * register_target)
                 )
@@ -640,6 +657,7 @@ class RealtimeChoraleEngine:
                     self.top_sonorities,
                     beam["repeat_streaks"],
                     repeat_penalty,
+                    controls.spacing,
                 )
             for sonority, local_cost in choices:
                 streaks = {}

@@ -15,12 +15,15 @@ from hand_movement import (
     StableChordGesture,
     HandAccelerationPeakDetector,
     HandMelodyHeight,
+    ConductorTiltStepDetector,
     TiltQualityClassifier,
     chord_degree_for_fingers,
+    conductor_melody_gesture,
     chord_quality_for_tilt,
     extended_fingers,
     finger_extension_amount,
     hand_openness,
+    hand_distance_control,
     height_to_register,
     is_pinching,
 )
@@ -173,6 +176,34 @@ class LeftHandTests(unittest.TestCase):
 
 
 class ConductorMovementTests(unittest.TestCase):
+    def test_left_finger_intervals_and_fist(self):
+        patterns = (
+            ((False, True, False, False, False), ("scale", 1)),
+            ((True, False, False, False, False), ("arpeggio", 1)),
+            ((False, True, True, False, False), ("scale", 2)),
+            ((False, True, True, True, False), ("scale", 3)),
+            ((False, True, True, True, True), ("scale", 4)),
+            ((True, True, True, True, True), ("scale", 5)),
+            ((False,) * 5, ("mute", 0)),
+        )
+        for fingers, expected in patterns:
+            self.assertEqual(conductor_melody_gesture(fingers), expected)
+
+    def test_tilt_emits_one_semitone_per_lean_and_rearms_upright(self):
+        detector = ConductorTiltStepDetector()
+        self.assertEqual(detector.update(30, 0.00), 0)
+        self.assertEqual(detector.update(30, 0.08), 1)
+        self.assertEqual(detector.update(30, 0.20), 0)
+        self.assertEqual(detector.update(0, 0.30), 0)
+        self.assertEqual(detector.update(-30, 0.35), 0)
+        self.assertEqual(detector.update(-30, 0.43), -1)
+
+    def test_palm_distance_increases_expression(self):
+        hand = hand_with_direction(0.5, 0.5)
+        close = hand_distance_control(hand, shifted_hand(hand, dx=0.18))
+        far = hand_distance_control(hand, shifted_hand(hand, dx=0.6))
+        self.assertGreater(far, close)
+
     @staticmethod
     def _peak_count(detector, positions):
         base = hand_with_direction(0.5, 0.5)

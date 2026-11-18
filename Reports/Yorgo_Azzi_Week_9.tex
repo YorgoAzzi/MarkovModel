@@ -1,0 +1,193 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=0.2em,itemsep=0.25em}
+
+\definecolor{linkblue}{HTML}{1F4E79}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkblue,
+    urlcolor=linkblue,
+    pdftitle={VIP Week 9 Report},
+    pdfauthor={Yorgo Azzi}
+}
+
+\begin{document}
+
+\begin{center}
+    {\Large\bfseries VIP Week 9 Report}\\[0.5em]
+    {\large Yorgo Azzi}\\[0.25em]
+    November 11, 2026
+\end{center}
+
+\section{Overview}
+
+This week, I developed a new Conductor mode for the movement-controlled music
+system. The objective was to give the performer direct control over when the
+music advances, instead of allowing the model to continue according to a fixed
+clock. MediaPipe hand tracking remains the input method, while the two hands
+now have separate and clearly defined musical roles.
+
+The right hand controls the beat and chord selection. The left hand performs
+the soprano melody through vertical movement. The Markov model continues to
+generate the three accompaniment voices and maintain the musical structure.
+
+\section{Work Completed}
+
+\subsection{Event-Driven Conductor Mode}
+
+A third interface mode, called \textbf{Conductor}, was added alongside Full
+SATB and Soprano Performance. In this mode, the accompaniment does not advance
+automatically. It waits for a conducting gesture from the performer.
+
+MediaPipe provides the position of the hand landmarks in each camera frame. A
+stable palm center is calculated from the wrist and knuckle landmarks. The
+system then estimates palm velocity and acceleration over time. An acceleration
+peak is treated as a beat command, and the time between accepted beats provides
+an estimate of the performance tempo.
+
+The detector was refined so that only a \textbf{downward right-hand stroke}
+can trigger a beat. Upward recovery, sideways movement, and all left-hand
+acceleration are ignored. I increased the acceleration threshold to 10 in the
+current setup so that small tracking changes and ordinary hand motion do not
+advance the music. A short refractory period also prevents one stroke from
+being detected more than once.
+
+When a beat is accepted, the realtime engine advances exactly one beat and
+forces an audible onset. If no new downstroke is detected, the current notes
+remain sustained. This makes the generation follow the performer's conducting
+gestures rather than the internal clock.
+
+\subsection{Right-Hand Chord Control}
+
+The right hand also selects the chord degree that will be applied at the next
+conducted beat. The finger combinations are:
+
+\begin{itemize}
+    \item index: first degree;
+    \item index and middle: second degree;
+    \item index, middle, and ring: third degree;
+    \item index, middle, ring, and pinky: fourth degree;
+    \item all five fingers: fifth degree;
+    \item thumb: sixth degree;
+    \item thumb and index: seventh degree.
+\end{itemize}
+
+The selected degree is interpreted within the chosen key and mode. The chord
+gesture is sampled when the right-hand beat occurs, so the performer prepares
+a finger pattern and then uses the downstroke to apply it. If the current
+finger pattern is not mapped, the previous chord degree is retained.
+
+An earlier version divided chord control between both hands, with degrees six
+and seven assigned to the left hand. This was removed so that the right hand
+has one complete role: controlling the timing and harmony.
+
+\subsection{Left-Hand Melody Control}
+
+The left hand now controls only the soprano melody. At every conducted beat,
+its current height becomes the reference position. Until the following beat,
+moving the hand upward produces successive ascending scale notes, while moving
+it downward produces successive descending scale notes. A stationary hand
+holds the current soprano note.
+
+Only one scale step is emitted per camera frame. This allows a larger hand
+movement to be heard as a short ascending or descending scale instead of
+replacing several notes at the same instant. Right-hand height has no effect
+on the melody, and left-hand movement cannot trigger the accompaniment.
+
+\subsection{Realtime Integration}
+
+Conductor mode uses an event queue between the camera interface and the audio
+thread. Beat events advance the Markov accompaniment, while melody events
+replace only the soprano note and sustain the other three voices. This keeps
+melodic movement responsive without waiting for another accompaniment beat.
+
+The mode was added to the existing interface with its own button and keyboard
+shortcut. Its soprano output appears in the integrated piano roll, while Full
+SATB and Soprano Performance remain available without changing their existing
+controls.
+
+\section{Results}
+
+The main results were:
+
+\begin{itemize}
+    \item Music generation can now wait for an intentional conducting gesture
+    instead of progressing continuously.
+    \item Downward-only detection gives the right-hand stroke a clearer musical
+    meaning and prevents the upward recovery from creating an extra beat.
+    \item Raising the acceleration threshold reduces accidental beat commands
+    caused by small movements and landmark jitter.
+    \item The right hand provides a complete beat-and-chord control role,
+    including all seven chord degrees.
+    \item The left hand independently performs successive soprano scale notes,
+    while the Markov model supplies the three accompaniment voices.
+    \item The separation between the two hands makes the interaction easier to
+    understand: right for timing and harmony, left for melody.
+    \item The new mode works inside the existing camera, MIDI, piano-roll, and
+    mode-selection interface.
+\end{itemize}
+
+\section{Challenges}
+
+Acceleration estimates depend on camera frame timing and MediaPipe landmark
+stability. A low threshold can create false beats, while a very high threshold
+can require an exaggerated gesture or miss softer conducting strokes. The
+value of 10 works as a stricter starting point for the current setup, but it
+still requires physical testing under different camera positions and lighting
+conditions.
+
+The local acceleration maximum is confirmed one camera frame after it occurs.
+This improves resistance to landmark noise but introduces a small detection
+delay. The complete perceived response also includes camera capture, hand
+tracking, event processing, MIDI output, and synthesizer latency.
+
+Chord accuracy still depends on MediaPipe correctly recognizing the finger
+pattern at the exact time of the beat. Thumb-based gestures for the sixth and
+seventh degrees may require additional tuning because thumb extension is more
+difficult to classify consistently than the other fingers.
+
+Finally, the left-hand melody is limited to notes from the selected scale. This
+keeps the result coherent with the accompaniment, but the performer currently
+has no direct control over larger melodic intervals or notes outside the scale.
+
+\section{Next Steps}
+
+\begin{itemize}
+    \item Test the Conductor mode in complete performances and tune the
+    acceleration threshold, minimum speed, refractory period, and melodic
+    movement distance.
+    \item Measure the delay between the physical downstroke and the audible
+    onset to identify whether the camera, MediaPipe, MIDI output, or synthesizer
+    contributes most to the response time.
+    \item Improve visual feedback by showing when the right-hand stroke is
+    accepted and which chord degree will be applied at the next beat.
+    \item Evaluate the reliability of all seven right-hand finger patterns,
+    especially the thumb gestures, and adjust the gesture filtering if needed.
+    \item Record short user trials to determine whether the separation between
+    right-hand conducting and left-hand melody feels natural and musically
+    satisfying.
+\end{itemize}
+
+\section{Resources}
+
+\begin{itemize}
+    \item Project repository:
+    \url{https://github.com/YorgoAzzi/MarkovModel}
+    \item MediaPipe Hand Landmarker documentation:
+    \url{https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker}
+    \item OpenCV documentation:
+    \url{https://docs.opencv.org/}
+\end{itemize}
+
+\end{document}

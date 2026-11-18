@@ -83,7 +83,10 @@ class IntegratedWindowTests(unittest.TestCase):
             self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
 
             window.set_state(mode=MODE_CONDUCTOR, playing=True, summary="conduct")
+            window.set_swap_roles(True)
             self.assertTrue(window.conductor_button.isChecked())
+            self.assertTrue(window.swap_roles_button.isEnabled())
+            self.assertTrue(window.swap_roles_button.isChecked())
             self.assertEqual(window.visual_title.text(), "Conducted melody")
             self.assertIs(window.visual_stack.currentWidget(), window.piano_roll)
         finally:

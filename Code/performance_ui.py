@@ -280,6 +280,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     mode_requested = QtCore.pyqtSignal(str)
     transport_requested = QtCore.pyqtSignal()
+    swap_roles_requested = QtCore.pyqtSignal()
     magenta_enabled_requested = QtCore.pyqtSignal(bool)
     magenta_input_requested = QtCore.pyqtSignal(str)
     close_requested = QtCore.pyqtSignal()
@@ -341,6 +342,10 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         buttons.addWidget(self.conductor_button)
         buttons.addWidget(self.transport_button)
         camera_layout.addLayout(buttons)
+
+        self.swap_roles_button = QtWidgets.QPushButton("Swap hand roles  [H]")
+        self.swap_roles_button.setCheckable(True)
+        camera_layout.addWidget(self.swap_roles_button)
 
         magenta_controls = QtWidgets.QHBoxLayout()
         self.magenta_button = QtWidgets.QPushButton("Magenta Off")
@@ -406,6 +411,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             lambda: self.mode_requested.emit(MODE_CONDUCTOR)
         )
         self.transport_button.clicked.connect(self.transport_requested.emit)
+        self.swap_roles_button.clicked.connect(self.swap_roles_requested.emit)
         self.magenta_button.toggled.connect(self.magenta_enabled_requested.emit)
         self.magenta_input.currentIndexChanged.connect(
             lambda _index: self.magenta_input_requested.emit(
@@ -437,6 +443,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         QtWidgets.QShortcut(
             QtGui.QKeySequence("Space"), self, self.transport_requested.emit
         )
+        QtWidgets.QShortcut(
+            QtGui.QKeySequence("H"), self, self.swap_roles_requested.emit
+        )
         QtWidgets.QShortcut(QtGui.QKeySequence("Q"), self, self.close)
         QtWidgets.QShortcut(QtGui.QKeySequence("Escape"), self, self.close)
 
@@ -466,6 +475,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.full_button.setChecked(mode == MODE_FULL)
         self.soprano_button.setChecked(mode == MODE_SOPRANO)
         self.conductor_button.setChecked(mode == MODE_CONDUCTOR)
+        self.swap_roles_button.setEnabled(mode == MODE_CONDUCTOR)
         melody_view = mode in {MODE_SOPRANO, MODE_CONDUCTOR}
         self.visual_stack.setCurrentWidget(
             self.piano_roll if melody_view else self.score_scroll
@@ -481,6 +491,13 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             "Pause  [Space]" if playing else "Play  [Space]"
         )
         self.summary_label.setText(summary)
+
+    def set_swap_roles(self, swapped: bool) -> None:
+        self.swap_roles_button.setChecked(bool(swapped))
+        self.swap_roles_button.setText(
+            "Swapped: left beat / right melody  [H]" if swapped
+            else "Swap hand roles  [H]"
+        )
 
     def set_magenta_state(
         self,

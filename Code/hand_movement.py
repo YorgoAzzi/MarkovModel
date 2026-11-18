@@ -342,6 +342,64 @@ def chord_degree_for_fingers(fingers: Sequence[bool]) -> Optional[int]:
     return CHORD_GESTURES.get(tuple(bool(value) for value in fingers))
 
 
+def conductor_melody_gesture(fingers: Sequence[bool]) -> tuple[str, int] | None:
+    """Return the left-hand interval or chord-tone gesture."""
+    if len(fingers) != 5:
+        raise ValueError("Expected five finger states")
+    pattern = tuple(bool(value) for value in fingers)
+    gestures = {
+        (False, True, False, False, False): ("scale", 1),
+        (True, False, False, False, False): ("arpeggio", 1),
+        (False, True, True, False, False): ("scale", 2),
+        (False, True, True, True, False): ("scale", 3),
+        (False, True, True, True, True): ("scale", 4),
+        (True, True, True, True, True): ("scale", 5),
+        (False, False, False, False, False): ("mute", 0),
+    }
+    return gestures.get(pattern)
+
+
+def hand_distance_control(first: HandObservation, second: HandObservation) -> float:
+    """Map palm separation in screen widths to a 0..1 expression target."""
+    x1, y1 = palm_center(first)
+    x2, y2 = palm_center(second)
+    distance = math.hypot(x1 - x2, y1 - y2)
+    return _clamp((distance - 0.15) / 0.55, 0.0, 1.0)
+
+
+class ConductorTiltStepDetector:
+    """Emit one semitone command per left/right lean, rearming near upright."""
+
+    def __init__(self, threshold: float = 25.0, neutral: float = 12.0,
+                 dwell_seconds: float = 0.06):
+        self.threshold = max(1.0, float(threshold))
+        self.neutral = min(self.threshold - 0.1, max(0.0, float(neutral)))
+        self.dwell_seconds = max(0.0, float(dwell_seconds))
+        self.reset()
+
+    def reset(self) -> None:
+        self._armed = True
+        self._candidate = 0
+        self._since = None
+
+    def update(self, angle: float, timestamp: float) -> int:
+        angle = float(angle)
+        if abs(angle) <= self.neutral:
+            self.reset()
+            return 0
+        direction = 1 if angle >= self.threshold else -1 if angle <= -self.threshold else 0
+        if direction == 0 or not self._armed:
+            return 0
+        if direction != self._candidate:
+            self._candidate = direction
+            self._since = float(timestamp)
+            return 0
+        if float(timestamp) - self._since < self.dwell_seconds:
+            return 0
+        self._armed = False
+        return direction
+
+
 def chord_quality_for_tilt(tilt_degrees: float, threshold: float = 18.0) -> str:
     """Map left/upright/right lean to minor/diatonic/major."""
     threshold = max(1.0, float(threshold))
