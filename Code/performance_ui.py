@@ -288,9 +288,10 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
     def __init__(self, *, show_score: bool = True):
         super().__init__()
         self.closed = False
-        self._show_score = show_score
         self._effects_enabled = False
         self._effects_view = None
+        self._camera_image = None
+        self._hand_positions = ()
         self._versions = []
         self._score_labels = []
         self._follow_live = True
@@ -316,7 +317,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.camera_label.setStyleSheet(
             "background:#111820;color:#d9e3ea;border-radius:6px;"
         )
-        camera_layout.addWidget(self.camera_label, 1)
+        self.camera_stack = QtWidgets.QStackedWidget()
+        self.camera_stack.addWidget(self.camera_label)
+        camera_layout.addWidget(self.camera_stack, 1)
 
         buttons = QtWidgets.QHBoxLayout()
         self.full_button = QtWidgets.QPushButton("Full SATB  [1]")
@@ -484,26 +487,27 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         return self._effects_enabled
 
     def set_visual_effects_enabled(self, enabled: bool) -> None:
-        """Switch between the existing music view and optional OpenGL effects."""
+        """Overlay the optional visual on the camera, leaving the score visible."""
         if enabled and self._effects_view is None:
             try:
                 from opengl_visual import MusicPulseView
             except ModuleNotFoundError:
                 from .opengl_visual import MusicPulseView
             self._effects_view = MusicPulseView()
-            self.visual_stack.addWidget(self._effects_view)
+            self.camera_stack.addWidget(self._effects_view)
         self._effects_enabled = bool(enabled)
         self.effects_button.setChecked(self._effects_enabled)
-        self.score_panel.setVisible(self._show_score or self._effects_enabled)
-        self.follow_button.setVisible(self._show_score and not self._effects_enabled)
-        self._select_music_view()
+        if self._effects_enabled:
+            self._effects_view.set_hand_positions(self._hand_positions)
+            if self._camera_image is not None:
+                self._effects_view.set_camera_image(self._camera_image)
+            self.camera_stack.setCurrentWidget(self._effects_view)
+        else:
+            self.camera_stack.setCurrentWidget(self.camera_label)
+            if self._camera_image is not None:
+                self._show_camera_image(self._camera_image)
 
     def _select_music_view(self) -> None:
-        if self._effects_enabled:
-            self.visual_stack.setCurrentWidget(self._effects_view)
-            self.visual_title.setText("Music visuals")
-            self.score_status.setText("Particles follow generated note onsets")
-            return
         melody_view = self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}
         self.visual_stack.setCurrentWidget(
             self.piano_roll if melody_view else self.score_scroll
@@ -519,6 +523,11 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         if self._effects_enabled and self._effects_view is not None:
             self._effects_view.pulse(pitch=pitch, velocity=velocity, voices=voices)
 
+    def set_visual_hand_positions(self, positions) -> None:
+        self._hand_positions = tuple(positions)
+        if self._effects_enabled and self._effects_view is not None:
+            self._effects_view.set_hand_positions(self._hand_positions)
+
     def set_state(self, *, mode: str, playing: bool, summary: str) -> None:
         mode_changed = mode != self._mode
         self._mode = mode
@@ -527,7 +536,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.conductor_button.setChecked(mode == MODE_CONDUCTOR)
         self.swap_roles_button.setEnabled(mode == MODE_CONDUCTOR)
         self._select_music_view()
-        if mode_changed and self._follow_live and not self._effects_enabled:
+        if mode_changed and self._follow_live:
             QtCore.QTimer.singleShot(0, self.follow_live)
         self.transport_button.setText(
             "Pause  [Space]" if playing else "Play  [Space]"
@@ -568,6 +577,13 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             channels * width,
             QtGui.QImage.Format_BGR888,
         ).copy()
+        self._camera_image = image
+        if self._effects_enabled and self._effects_view is not None:
+            self._effects_view.set_camera_image(image)
+        else:
+            self._show_camera_image(image)
+
+    def _show_camera_image(self, image) -> None:
         pixmap = QtGui.QPixmap.fromImage(image)
         self.camera_label.setPixmap(
             pixmap.scaled(
@@ -619,7 +635,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         return pixmap
 
     def update_score(self, snapshot) -> None:
-        if self._mode == MODE_FULL and not self._effects_enabled:
+        if self._mode == MODE_FULL:
             self.score_status.setText(snapshot["status"])
         versions = list(snapshot["page_versions"])
         changed = len(versions) != len(self._versions)
@@ -641,7 +657,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     def update_piano_roll(self, snapshot) -> None:
         """Refresh the soprano-only roll from a thread-safe model snapshot."""
-        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR} and not self._effects_enabled:
+        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}:
             self.score_status.setText(snapshot["status"])
         changed = self.piano_roll.update_snapshot(snapshot)
         if (

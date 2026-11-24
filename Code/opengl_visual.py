@@ -1,4 +1,4 @@
-"""Optional OpenGL-backed music visual for the integrated performance window."""
+"""Optional note-driven effects drawn over the live camera in an OpenGL widget."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 class _Particle:
     born: float
     lifetime: float
-    x: float
+    x: float  # normalized camera coordinates
     y: float
     z: float
     vx: float
@@ -24,20 +24,28 @@ class _Particle:
     color: QtGui.QColor
 
 
-class MusicPulseView(QtWidgets.QOpenGLWidget):
-    """Draw note-triggered particles into a Qt OpenGL framebuffer.
+@dataclass(frozen=True)
+class _Pulse:
+    born: float
+    x: float
+    y: float
+    color: QtGui.QColor
 
-    The first visual is deliberately modest: Qt's painter draws into the
-    OpenGL widget, with simple perspective used for particle depth. It keeps
-    the existing camera, MediaPipe, MIDI, and score paths independent.
+
+class MusicPulseView(QtWidgets.QOpenGLWidget):
+    """Paint camera frames and hand-anchored particles in one OpenGL surface.
+
+    Qt's painter handles this first perspective effect within the OpenGL
+    framebuffer. The camera and MediaPipe processing remain unchanged.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(400, 300)
+        self.setMinimumSize(640, 480)
+        self._camera_image = None
+        self._hand_positions: tuple[tuple[float, float], ...] = ()
         self._particles: list[_Particle] = []
-        self._pulse_time = -10.0
-        self._pulse_color = QtGui.QColor("#39d9d1")
+        self._pulses: list[_Pulse] = []
         self._rng = random.Random(0xC0DE)
         self._timer = QtCore.QTimer(self)
         self._timer.setInterval(33)
@@ -45,7 +53,7 @@ class MusicPulseView(QtWidgets.QOpenGLWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self._particles:
+        if self._particles or self._pulses:
             self._timer.start()
         self.update()
 
@@ -53,33 +61,50 @@ class MusicPulseView(QtWidgets.QOpenGLWidget):
         self._timer.stop()
         super().hideEvent(event)
 
-    def pulse(self, *, pitch: int, velocity: int, voices: int = 1) -> None:
-        """Start one visual burst after an audible note onset, on the UI thread."""
-        now = time.perf_counter()
-        hue = (int(pitch) * 29) % 360
-        color = QtGui.QColor.fromHsv(hue, 185, 255)
-        self._pulse_time = now
-        self._pulse_color = color
-        amount = min(34, 12 + 4 * max(1, int(voices)))
-        energy = 0.6 + 0.65 * max(0, min(127, int(velocity))) / 127.0
-        for _ in range(amount):
-            angle = self._rng.uniform(0, 2 * math.pi)
-            speed = self._rng.uniform(0.35, 1.15) * energy
-            self._particles.append(
-                _Particle(
-                    born=now,
-                    lifetime=self._rng.uniform(0.55, 1.25),
-                    x=self._rng.uniform(-0.04, 0.04),
-                    y=self._rng.uniform(-0.04, 0.04),
-                    z=self._rng.uniform(-0.25, 0.55),
-                    vx=math.cos(angle) * speed,
-                    vy=math.sin(angle) * speed,
-                    vz=self._rng.uniform(-0.7, 0.8),
-                    size=self._rng.uniform(3.0, 8.0),
-                    color=color,
-                )
+    def set_camera_image(self, image: QtGui.QImage) -> None:
+        """Receive an owned QImage copied from the most recent camera frame."""
+        self._camera_image = image
+        self.update()
+
+    def set_hand_positions(self, positions) -> None:
+        """Use MediaPipe palm centers in camera-normalized coordinates."""
+        self._hand_positions = tuple(
+            (
+                max(0.0, min(1.0, float(x))),
+                max(0.0, min(1.0, float(y))),
             )
+            for x, y in positions
+            if math.isfinite(float(x)) and math.isfinite(float(y))
+        )
+
+    def pulse(self, *, pitch: int, velocity: int, voices: int = 1) -> None:
+        """Burst at each tracked hand when generated music begins a note."""
+        now = time.perf_counter()
+        color = QtGui.QColor.fromHsv((int(pitch) * 29) % 360, 185, 255)
+        anchors = self._hand_positions or ((0.5, 0.5),)
+        count = min(34, 12 + 4 * max(1, int(voices)))
+        energy = 0.6 + 0.65 * max(0, min(127, int(velocity))) / 127.0
+        for anchor_x, anchor_y in anchors:
+            self._pulses.append(_Pulse(now, anchor_x, anchor_y, color))
+            for _ in range(max(8, count // len(anchors))):
+                angle = self._rng.uniform(0, 2 * math.pi)
+                speed = self._rng.uniform(0.35, 1.15) * energy
+                self._particles.append(
+                    _Particle(
+                        born=now,
+                        lifetime=self._rng.uniform(0.55, 1.25),
+                        x=anchor_x + self._rng.uniform(-0.01, 0.01),
+                        y=anchor_y + self._rng.uniform(-0.01, 0.01),
+                        z=self._rng.uniform(-0.25, 0.55),
+                        vx=math.cos(angle) * speed,
+                        vy=math.sin(angle) * speed,
+                        vz=self._rng.uniform(-0.7, 0.8),
+                        size=self._rng.uniform(3.0, 8.0),
+                        color=color,
+                    )
+                )
         self._particles = self._particles[-180:]
+        self._pulses = self._pulses[-12:]
         if self.isVisible():
             self._timer.start()
         self.update()
@@ -87,75 +112,70 @@ class MusicPulseView(QtWidgets.QOpenGLWidget):
     def paintGL(self):
         now = time.perf_counter()
         self._particles = [
-            particle
-            for particle in self._particles
-            if now - particle.born < particle.lifetime
+            item for item in self._particles if now - item.born < item.lifetime
         ]
-        width, height = self.width(), self.height()
-        center_x, center_y = width * 0.5, height * 0.5
-        extent = min(width, height) * 0.42
+        self._pulses = [item for item in self._pulses if now - item.born < 0.65]
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QtGui.QColor("#111820"))
 
-        background = QtGui.QLinearGradient(0, 0, width, height)
-        background.setColorAt(0, QtGui.QColor("#091825"))
-        background.setColorAt(1, QtGui.QColor("#172035"))
-        painter.fillRect(self.rect(), background)
-
-        # A small vanishing-point grid gives the bursts visible depth.
-        grid_pen = QtGui.QPen(QtGui.QColor(76, 128, 151, 55), 1)
-        painter.setPen(grid_pen)
-        for offset in (-1.0, -0.5, 0.0, 0.5, 1.0):
-            painter.drawLine(
-                QtCore.QPointF(center_x, center_y),
-                QtCore.QPointF(center_x + offset * width, height),
+        image = self._camera_image
+        if image is None or image.isNull():
+            target = QtCore.QRectF(self.rect())
+            painter.setPen(QtGui.QColor("#d9e3ea"))
+            painter.drawText(self.rect(), QtCore.Qt.AlignCenter, "Waiting for camera...")
+        else:
+            scale = min(self.width() / image.width(), self.height() / image.height())
+            image_width = image.width() * scale
+            image_height = image.height() * scale
+            target = QtCore.QRectF(
+                (self.width() - image_width) / 2,
+                (self.height() - image_height) / 2,
+                image_width,
+                image_height,
             )
-        for fraction in (0.58, 0.69, 0.82, 0.96):
-            y = center_y + (height - center_y) * fraction
-            painter.drawLine(QtCore.QPointF(0, y), QtCore.QPointF(width, y))
+            painter.drawImage(target, image)
 
-        age = now - self._pulse_time
-        if 0 <= age < 0.65:
+        painter.setClipRect(target)
+        extent = min(target.width(), target.height()) * 0.42
+        for pulse in self._pulses:
+            age = now - pulse.born
             fade = 1.0 - age / 0.65
-            glow = QtGui.QRadialGradient(center_x, center_y, extent * 0.8)
-            inner = QtGui.QColor(self._pulse_color)
+            center = QtCore.QPointF(
+                target.left() + pulse.x * target.width(),
+                target.top() + pulse.y * target.height(),
+            )
+            glow = QtGui.QRadialGradient(center, extent * 0.45)
+            inner = QtGui.QColor(pulse.color)
             inner.setAlpha(int(95 * fade))
-            outer = QtGui.QColor(self._pulse_color)
+            outer = QtGui.QColor(pulse.color)
             outer.setAlpha(0)
             glow.setColorAt(0, inner)
             glow.setColorAt(1, outer)
             painter.setPen(QtCore.Qt.NoPen)
             painter.setBrush(glow)
-            painter.drawEllipse(
-                QtCore.QPointF(center_x, center_y), extent * 0.8, extent * 0.8
-            )
-            ring = QtGui.QColor(self._pulse_color)
+            painter.drawEllipse(center, extent * 0.45, extent * 0.45)
+            ring = QtGui.QColor(pulse.color)
             ring.setAlpha(int(190 * fade))
             painter.setBrush(QtCore.Qt.NoBrush)
             painter.setPen(QtGui.QPen(ring, 2.5))
             radius = 18 + age * extent * 1.35
-            painter.drawEllipse(QtCore.QPointF(center_x, center_y), radius, radius)
+            painter.drawEllipse(center, radius, radius)
 
         painter.setPen(QtCore.Qt.NoPen)
         for particle in sorted(self._particles, key=lambda item: item.z):
             elapsed = now - particle.born
             z = particle.z + elapsed * particle.vz
-            scale = 1.0 / max(0.4, 1.0 + z * 0.45)
-            x = center_x + (particle.x + elapsed * particle.vx) * extent * scale
-            y = center_y + (particle.y + elapsed * particle.vy) * extent * scale
-            radius = particle.size * scale
+            depth_scale = 1.0 / max(0.4, 1.0 + z * 0.45)
+            x = target.left() + particle.x * target.width()
+            y = target.top() + particle.y * target.height()
+            x += elapsed * particle.vx * extent * depth_scale
+            y += elapsed * particle.vy * extent * depth_scale
+            radius = particle.size * depth_scale
             color = QtGui.QColor(particle.color)
             color.setAlpha(int(235 * (1.0 - elapsed / particle.lifetime)))
             painter.setBrush(color)
             painter.drawEllipse(QtCore.QPointF(x, y), radius, radius)
-
-        painter.setPen(QtGui.QColor("#c4d8e6"))
-        painter.drawText(18, 30, "MUSIC VISUALS  |  NOTE PULSES")
-        if not self._particles and age >= 0.65:
-            painter.setPen(QtGui.QColor("#7d9aac"))
-            painter.drawText(
-                self.rect(), QtCore.Qt.AlignCenter, "Waiting for the next note..."
-            )
         painter.end()
-        if not self._particles and age >= 0.65:
+        if not self._particles and not self._pulses:
             self._timer.stop()

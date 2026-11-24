@@ -425,7 +425,7 @@ def main():
     print("Hand separation controls expression and accompaniment spacing; Swap hand roles or H exchanges roles.")
     print("Soprano fingers: 1=piano, 2=violin, 3=choir, 4=flute, 5=synth pad; shake=trill, index tap=mordent.")
     print("Magenta: use the window controls to enable accompaniment and select soprano/all input.")
-    print("Music visuals: press V to switch between the score/roll and OpenGL note pulses.")
+    print("Music visuals: press V to show note pulses over your tracked hands.")
     print("Press Q or Escape to stop.")
 
     pending_actions = deque()
@@ -464,14 +464,6 @@ def main():
             if window.closed:
                 stop_event.set()
                 break
-            while True:
-                try:
-                    pitch, velocity, voices = visual_events.get_nowait()
-                except Empty:
-                    break
-                window.on_music_event(
-                    pitch=pitch, velocity=velocity, voices=voices
-                )
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError("Camera stopped returning frames")
@@ -875,6 +867,19 @@ def main():
                 (f"Key={engine.key} mode={engine.mode} | Q/Esc: quit", (255, 255, 255)),
             ]
             _put_lines(cv2, frame, lines)
+            window.set_visual_hand_positions(
+                palm_center(hand)
+                for hand in (left_hand, right_hand)
+                if hand is not None
+            )
+            while True:
+                try:
+                    pitch, velocity, voices = visual_events.get_nowait()
+                except Empty:
+                    break
+                window.on_music_event(
+                    pitch=pitch, velocity=velocity, voices=voices
+                )
             window.set_camera_frame(frame)
             window.set_state(
                 mode=session.mode,
