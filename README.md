@@ -340,6 +340,14 @@ newest music until you scroll backward; the **Follow live** button returns to
 the current position. Alto, tenor, and bass continue playing in Soprano
 Performance and Conductor modes but do not appear in the piano roll.
 
+Click **Music visuals** or press **V** to switch the right-hand panel to an
+optional OpenGL-backed particle view. Generated note onsets trigger bursts;
+pitch changes their color, while velocity and the number of entering voices
+change the burst. Press **V** again to return to the score or piano roll. The
+camera, MediaPipe tracking, MIDI output, and existing music views continue to
+work as before. The effect uses Qt's OpenGL widget and painter; it is an initial
+perspective particle prototype rather than a full 3D scene.
+
 Music playback does not wait for notation. Generated onsets enter a queue, and
 a background worker converts them through `music21` to MusicXML and Verovio to
 SVG. The Qt interface renders those SVG pages directly inside the application.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from pathlib import Path
+from queue import Empty, Full, Queue
 import sys
 import threading
 import time
@@ -365,7 +366,29 @@ def main():
             beats_per_bar=session.beats_per_bar,
             visible_bars=args.score_bars,
         )
-    observers = [magenta.observe]
+    visual_events = Queue(maxsize=32)
+
+    def observe_visual_onset(frame):
+        """Hand a small onset record to Qt without drawing on the audio thread."""
+        voices = len(frame.new_voices) or (len(frame.pitches) if frame.new_notes else 0)
+        if not voices:
+            return
+        pitch = next(
+            (
+                frame.pitches[voice]
+                for voice in ("soprano", "alto", "tenor", "bass")
+                if voice in frame.new_voices and voice in frame.pitches
+            ),
+            None,
+        )
+        if pitch is None:
+            pitch = frame.pitches.get("soprano", next(iter(frame.pitches.values()), 60))
+        try:
+            visual_events.put_nowait((int(pitch), frame.velocity, voices))
+        except Full:
+            pass  # Visual overload must never delay MIDI playback.
+
+    observers = [magenta.observe, observe_visual_onset]
     if live_score is not None:
         observers.append(live_score.observe)
     if piano_roll is not None:
@@ -402,6 +425,7 @@ def main():
     print("Hand separation controls expression and accompaniment spacing; Swap hand roles or H exchanges roles.")
     print("Soprano fingers: 1=piano, 2=violin, 3=choir, 4=flute, 5=synth pad; shake=trill, index tap=mordent.")
     print("Magenta: use the window controls to enable accompaniment and select soprano/all input.")
+    print("Music visuals: press V to switch between the score/roll and OpenGL note pulses.")
     print("Press Q or Escape to stop.")
 
     pending_actions = deque()
@@ -440,6 +464,14 @@ def main():
             if window.closed:
                 stop_event.set()
                 break
+            while True:
+                try:
+                    pitch, velocity, voices = visual_events.get_nowait()
+                except Empty:
+                    break
+                window.on_music_event(
+                    pitch=pitch, velocity=velocity, voices=voices
+                )
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError("Camera stopped returning frames")

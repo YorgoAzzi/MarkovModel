@@ -89,6 +89,16 @@ class IntegratedWindowTests(unittest.TestCase):
             self.assertTrue(window.swap_roles_button.isChecked())
             self.assertEqual(window.visual_title.text(), "Conducted melody")
             self.assertIs(window.visual_stack.currentWidget(), window.piano_roll)
+            self.assertFalse(window.visual_effects_enabled)
+            window.set_visual_effects_enabled(True)
+            self.assertTrue(window.visual_effects_enabled)
+            self.assertIs(window.visual_stack.currentWidget(), window._effects_view)
+            window.on_music_event(pitch=72, velocity=100, voices=4)
+            self.assertGreater(len(window._effects_view._particles), 0)
+            window.set_state(mode=MODE_FULL, playing=True, summary="full")
+            self.assertIs(window.visual_stack.currentWidget(), window._effects_view)
+            window.set_visual_effects_enabled(False)
+            self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
         finally:
             window.close()
 
@@ -111,6 +121,18 @@ class IntegratedWindowTests(unittest.TestCase):
         self.assertEqual(len(paths), 1)
         self.assertEqual(paths[0].attrib["stroke"], "#D32F2F")
         self.assertEqual(paths[0].attrib["fill"], "#D32F2F")
+
+    def test_visual_effects_can_open_when_live_score_is_disabled(self):
+        window = IntegratedPerformanceWindow(show_score=False)
+        try:
+            self.assertTrue(window.score_panel.isHidden())
+            window.set_visual_effects_enabled(True)
+            self.assertFalse(window.score_panel.isHidden())
+            self.assertIs(window.visual_stack.currentWidget(), window._effects_view)
+            window.set_visual_effects_enabled(False)
+            self.assertTrue(window.score_panel.isHidden())
+        finally:
+            window.close()
 
 
 if __name__ == "__main__":

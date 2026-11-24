@@ -288,6 +288,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
     def __init__(self, *, show_score: bool = True):
         super().__init__()
         self.closed = False
+        self._show_score = show_score
+        self._effects_enabled = False
+        self._effects_view = None
         self._versions = []
         self._score_labels = []
         self._follow_live = True
@@ -346,6 +349,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.swap_roles_button = QtWidgets.QPushButton("Swap hand roles  [H]")
         self.swap_roles_button.setCheckable(True)
         camera_layout.addWidget(self.swap_roles_button)
+        self.effects_button = QtWidgets.QPushButton("Music visuals  [V]")
+        self.effects_button.setCheckable(True)
+        camera_layout.addWidget(self.effects_button)
 
         magenta_controls = QtWidgets.QHBoxLayout()
         self.magenta_button = QtWidgets.QPushButton("Magenta Off")
@@ -412,6 +418,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         )
         self.transport_button.clicked.connect(self.transport_requested.emit)
         self.swap_roles_button.clicked.connect(self.swap_roles_requested.emit)
+        self.effects_button.toggled.connect(self.set_visual_effects_enabled)
         self.magenta_button.toggled.connect(self.magenta_enabled_requested.emit)
         self.magenta_input.currentIndexChanged.connect(
             lambda _index: self.magenta_input_requested.emit(
@@ -446,6 +453,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         QtWidgets.QShortcut(
             QtGui.QKeySequence("H"), self, self.swap_roles_requested.emit
         )
+        QtWidgets.QShortcut(
+            QtGui.QKeySequence("V"), self, self.effects_button.toggle
+        )
         QtWidgets.QShortcut(QtGui.QKeySequence("Q"), self, self.close)
         QtWidgets.QShortcut(QtGui.QKeySequence("Escape"), self, self.close)
 
@@ -469,6 +479,46 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             bar = self.score_scroll.verticalScrollBar()
             bar.setValue(bar.maximum())
 
+    @property
+    def visual_effects_enabled(self) -> bool:
+        return self._effects_enabled
+
+    def set_visual_effects_enabled(self, enabled: bool) -> None:
+        """Switch between the existing music view and optional OpenGL effects."""
+        if enabled and self._effects_view is None:
+            try:
+                from opengl_visual import MusicPulseView
+            except ModuleNotFoundError:
+                from .opengl_visual import MusicPulseView
+            self._effects_view = MusicPulseView()
+            self.visual_stack.addWidget(self._effects_view)
+        self._effects_enabled = bool(enabled)
+        self.effects_button.setChecked(self._effects_enabled)
+        self.score_panel.setVisible(self._show_score or self._effects_enabled)
+        self.follow_button.setVisible(self._show_score and not self._effects_enabled)
+        self._select_music_view()
+
+    def _select_music_view(self) -> None:
+        if self._effects_enabled:
+            self.visual_stack.setCurrentWidget(self._effects_view)
+            self.visual_title.setText("Music visuals")
+            self.score_status.setText("Particles follow generated note onsets")
+            return
+        melody_view = self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}
+        self.visual_stack.setCurrentWidget(
+            self.piano_roll if melody_view else self.score_scroll
+        )
+        self.visual_title.setText(
+            "Conducted melody" if self._mode == MODE_CONDUCTOR else (
+                "Soprano piano roll" if self._mode == MODE_SOPRANO else "Live SATB score"
+            )
+        )
+
+    def on_music_event(self, *, pitch: int, velocity: int, voices: int) -> None:
+        """Deliver a MIDI onset to the optional visual on the Qt UI thread."""
+        if self._effects_enabled and self._effects_view is not None:
+            self._effects_view.pulse(pitch=pitch, velocity=velocity, voices=voices)
+
     def set_state(self, *, mode: str, playing: bool, summary: str) -> None:
         mode_changed = mode != self._mode
         self._mode = mode
@@ -476,16 +526,8 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.soprano_button.setChecked(mode == MODE_SOPRANO)
         self.conductor_button.setChecked(mode == MODE_CONDUCTOR)
         self.swap_roles_button.setEnabled(mode == MODE_CONDUCTOR)
-        melody_view = mode in {MODE_SOPRANO, MODE_CONDUCTOR}
-        self.visual_stack.setCurrentWidget(
-            self.piano_roll if melody_view else self.score_scroll
-        )
-        self.visual_title.setText(
-            "Conducted melody" if mode == MODE_CONDUCTOR else (
-                "Soprano piano roll" if mode == MODE_SOPRANO else "Live SATB score"
-            )
-        )
-        if mode_changed and self._follow_live:
+        self._select_music_view()
+        if mode_changed and self._follow_live and not self._effects_enabled:
             QtCore.QTimer.singleShot(0, self.follow_live)
         self.transport_button.setText(
             "Pause  [Space]" if playing else "Play  [Space]"
@@ -577,7 +619,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         return pixmap
 
     def update_score(self, snapshot) -> None:
-        if self._mode == MODE_FULL:
+        if self._mode == MODE_FULL and not self._effects_enabled:
             self.score_status.setText(snapshot["status"])
         versions = list(snapshot["page_versions"])
         changed = len(versions) != len(self._versions)
@@ -599,7 +641,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     def update_piano_roll(self, snapshot) -> None:
         """Refresh the soprano-only roll from a thread-safe model snapshot."""
-        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}:
+        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR} and not self._effects_enabled:
             self.score_status.setText(snapshot["status"])
         changed = self.piano_roll.update_snapshot(snapshot)
         if (
