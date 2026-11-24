@@ -373,18 +373,23 @@ def main():
         voices = len(frame.new_voices) or (len(frame.pitches) if frame.new_notes else 0)
         if not voices:
             return
-        pitch = next(
+        voice = next(
             (
-                frame.pitches[voice]
-                for voice in ("soprano", "alto", "tenor", "bass")
-                if voice in frame.new_voices and voice in frame.pitches
+                name for name in ("soprano", "alto", "tenor", "bass")
+                if name in frame.new_voices and name in frame.pitches
             ),
             None,
         )
-        if pitch is None:
-            pitch = frame.pitches.get("soprano", next(iter(frame.pitches.values()), 60))
+        if voice is None:
+            voice = "soprano" if "soprano" in frame.pitches else next(iter(frame.pitches), None)
+        pitch = frame.pitches.get(voice, 60)
+        duration_ticks = frame.voice_duration_ticks.get(
+            voice, frame.planned_duration_ticks
+        )
         try:
-            visual_events.put_nowait((int(pitch), frame.velocity, voices))
+            visual_events.put_nowait(
+                (int(pitch), frame.velocity, voices, duration_ticks, session.mode)
+            )
         except Full:
             pass  # Visual overload must never delay MIDI playback.
 
@@ -425,7 +430,7 @@ def main():
     print("Hand separation controls expression and accompaniment spacing; Swap hand roles or H exchanges roles.")
     print("Soprano fingers: 1=piano, 2=violin, 3=choir, 4=flute, 5=synth pad; shake=trill, index tap=mordent.")
     print("Magenta: use the window controls to enable accompaniment and select soprano/all input.")
-    print("Music visuals: press V to show note pulses over your tracked hands.")
+    print("Music visuals: V overlays camera pulses; P switches piano roll and painting.")
     print("Press Q or Escape to stop.")
 
     pending_actions = deque()
@@ -867,18 +872,22 @@ def main():
                 (f"Key={engine.key} mode={engine.mode} | Q/Esc: quit", (255, 255, 255)),
             ]
             _put_lines(cv2, frame, lines)
+            melody_hand = (
+                left_hand if session.mode == MODE_CONDUCTOR and roles_swapped
+                else right_hand
+            )
             window.set_visual_hand_positions(
-                palm_center(hand)
-                for hand in (left_hand, right_hand)
-                if hand is not None
+                (palm_center(hand) for hand in (left_hand, right_hand) if hand is not None),
+                paint_position=palm_center(melody_hand) if melody_hand is not None else None,
             )
             while True:
                 try:
-                    pitch, velocity, voices = visual_events.get_nowait()
+                    pitch, velocity, voices, duration_ticks, source_mode = visual_events.get_nowait()
                 except Empty:
                     break
                 window.on_music_event(
-                    pitch=pitch, velocity=velocity, voices=voices
+                    pitch=pitch, velocity=velocity, voices=voices,
+                    duration_ticks=duration_ticks, mode=source_mode,
                 )
             window.set_camera_frame(frame)
             window.set_state(

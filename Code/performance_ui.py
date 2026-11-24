@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 try:
@@ -22,6 +24,11 @@ try:
     from magenta_router import INPUT_ALL, INPUT_SOPRANO
 except ModuleNotFoundError:
     from .magenta_router import INPUT_ALL, INPUT_SOPRANO
+
+try:
+    from music_painting import MusicPaintingView
+except ModuleNotFoundError:
+    from .music_painting import MusicPaintingView
 
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -288,10 +295,14 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
     def __init__(self, *, show_score: bool = True):
         super().__init__()
         self.closed = False
+        self._show_score = show_score
         self._effects_enabled = False
         self._effects_view = None
         self._camera_image = None
         self._hand_positions = ()
+        self._paint_position = (0.5, 0.5)
+        self._painting_enabled = False
+        self._painting_saved_message = None
         self._versions = []
         self._score_labels = []
         self._follow_live = True
@@ -383,6 +394,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.visual_title.setObjectName("heading")
         self.score_status = QtWidgets.QLabel("Waiting for generated notes...")
         self.follow_button = QtWidgets.QPushButton("Follow live")
+        self.painting_button = QtWidgets.QPushButton("Music painting  [P]")
+        self.painting_button.setCheckable(True)
+        self.save_painting_button = QtWidgets.QPushButton("Save PNG")
         self.score_status.setSizePolicy(
             QtWidgets.QSizePolicy.Ignored,
             QtWidgets.QSizePolicy.Preferred,
@@ -393,6 +407,8 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         )
         score_header.addWidget(self.visual_title)
         score_header.addWidget(self.score_status, 1)
+        score_header.addWidget(self.painting_button)
+        score_header.addWidget(self.save_painting_button)
         score_header.addWidget(self.follow_button)
         score_layout.addLayout(score_header)
         self.score_scroll = QtWidgets.QScrollArea()
@@ -402,12 +418,16 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.score_pages.setAlignment(QtCore.Qt.AlignTop)
         self.score_scroll.setWidget(self.score_container)
         self.piano_roll = SopranoPianoRollView()
+        self.music_painting = MusicPaintingView()
         self.visual_stack = QtWidgets.QStackedWidget()
         self.visual_stack.addWidget(self.score_scroll)
         self.visual_stack.addWidget(self.piano_roll)
+        self.visual_stack.addWidget(self.music_painting)
         score_layout.addWidget(self.visual_stack, 1)
         splitter.addWidget(self.score_panel)
         self.score_panel.setVisible(show_score)
+        self.painting_button.setEnabled(False)
+        self.save_painting_button.setVisible(False)
         splitter.setSizes([650, 830])
 
         self.full_button.clicked.connect(
@@ -429,6 +449,8 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             )
         )
         self.follow_button.clicked.connect(self.follow_live)
+        self.painting_button.toggled.connect(self.set_painting_enabled)
+        self.save_painting_button.clicked.connect(self.save_painting)
         self.score_scroll.verticalScrollBar().actionTriggered.connect(
             self._manual_scroll
         )
@@ -458,6 +480,10 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         )
         QtWidgets.QShortcut(
             QtGui.QKeySequence("V"), self, self.effects_button.toggle
+        )
+        QtWidgets.QShortcut(
+            QtGui.QKeySequence("P"), self,
+            lambda: self.painting_button.toggle() if self.painting_button.isEnabled() else None,
         )
         QtWidgets.QShortcut(QtGui.QKeySequence("Q"), self, self.close)
         QtWidgets.QShortcut(QtGui.QKeySequence("Escape"), self, self.close)
@@ -509,22 +535,72 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     def _select_music_view(self) -> None:
         melody_view = self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}
-        self.visual_stack.setCurrentWidget(
+        painting_visible = melody_view and self._painting_enabled
+        target = (
+            self.music_painting if painting_visible else
             self.piano_roll if melody_view else self.score_scroll
         )
+        if self.visual_stack.currentWidget() is not target:
+            self.visual_stack.setCurrentWidget(target)
+        self.painting_button.setEnabled(self._show_score and melody_view)
+        self.save_painting_button.setVisible(painting_visible)
+        self.follow_button.setVisible(not painting_visible)
         self.visual_title.setText(
+            "Music painting" if painting_visible else
             "Conducted melody" if self._mode == MODE_CONDUCTOR else (
                 "Soprano piano roll" if self._mode == MODE_SOPRANO else "Live SATB score"
             )
         )
+        if painting_visible:
+            self.score_status.setText(
+                self._painting_saved_message or f"{self.music_painting.mark_count} marks"
+            )
 
-    def on_music_event(self, *, pitch: int, velocity: int, voices: int) -> None:
+    def set_painting_enabled(self, enabled: bool) -> None:
+        if not self._show_score:
+            return
+        self._painting_enabled = bool(enabled)
+        self.painting_button.setChecked(self._painting_enabled)
+        self.painting_button.setText(
+            "Piano roll  [P]" if self._painting_enabled else "Music painting  [P]"
+        )
+        self._select_music_view()
+
+    def save_painting(self) -> None:
+        folder = Path(__file__).resolve().parents[1] / "Paintings"
+        path = folder / f"music_painting_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
+        try:
+            folder.mkdir(exist_ok=True)
+            saved = self.music_painting.save_png(path)
+        except OSError:
+            saved = False
+        self._painting_saved_message = (
+            f"Saved: Paintings/{path.name}" if saved else "Could not save the painting"
+        )
+        self.score_status.setText(self._painting_saved_message)
+
+    def on_music_event(
+        self, *, pitch: int, velocity: int, voices: int,
+        duration_ticks: int = 1, mode: str | None = None,
+    ) -> None:
         """Deliver a MIDI onset to the optional visual on the Qt UI thread."""
         if self._effects_enabled and self._effects_view is not None:
             self._effects_view.pulse(pitch=pitch, velocity=velocity, voices=voices)
 
-    def set_visual_hand_positions(self, positions) -> None:
+        if self._show_score and (mode or self._mode) in {MODE_SOPRANO, MODE_CONDUCTOR}:
+            self.music_painting.add_note(
+                pitch=pitch, velocity=velocity,
+                duration_ticks=duration_ticks, voices=voices,
+                position=self._paint_position,
+            )
+            self._painting_saved_message = None
+            if self._painting_enabled:
+                self.score_status.setText(f"{self.music_painting.mark_count} marks")
+
+    def set_visual_hand_positions(self, positions, *, paint_position=None) -> None:
         self._hand_positions = tuple(positions)
+        if paint_position is not None:
+            self._paint_position = paint_position
         if self._effects_enabled and self._effects_view is not None:
             self._effects_view.set_hand_positions(self._hand_positions)
 
@@ -657,7 +733,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     def update_piano_roll(self, snapshot) -> None:
         """Refresh the soprano-only roll from a thread-safe model snapshot."""
-        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}:
+        if self._mode in {MODE_SOPRANO, MODE_CONDUCTOR} and not self._painting_enabled:
             self.score_status.setText(snapshot["status"])
         changed = self.piano_roll.update_snapshot(snapshot)
         if (

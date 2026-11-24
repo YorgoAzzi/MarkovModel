@@ -340,6 +340,15 @@ newest music until you scroll backward; the **Follow live** button returns to
 the current position. Alto, tenor, and bass continue playing in Soprano
 Performance and Conductor modes but do not appear in the piano roll.
 
+In Soprano Performance or Conductor mode, click **Music painting** or press
+**P** to show a growing artwork in place of the piano roll. Each generated
+onset adds a lasting brush stroke at the melody hand's camera position. Pitch
+sets the color, note duration sets stroke length, velocity sets brush width,
+and simultaneous voices add more shapes. The artwork keeps growing while you
+switch between the painting and piano roll. Click **Save PNG** to write the
+current image to the project's `Paintings/` directory. The Full SATB score and
+the optional camera particle overlay remain separate.
+
 Click **Music visuals** or press **V** to show particles over the live camera
 image, centered on the hands that MediaPipe tracks. Generated note onsets
 trigger bursts; pitch changes their color, while velocity and the number of

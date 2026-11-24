@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -11,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Code"))
 
-from PyQt5 import QtWidgets
+from PyQt5 import QtGui, QtWidgets
 from magenta_router import INPUT_ALL
 from performance_session import MODE_CONDUCTOR, MODE_FULL, MODE_SOPRANO
 from piano_roll import PianoRollNote
@@ -139,6 +140,41 @@ class IntegratedWindowTests(unittest.TestCase):
             window.set_visual_effects_enabled(False)
             self.assertTrue(window.score_panel.isHidden())
             self.assertIs(window.camera_stack.currentWidget(), window.camera_label)
+        finally:
+            window.close()
+
+    def test_music_painting_keeps_marks_and_exports_png(self):
+        window = IntegratedPerformanceWindow(show_score=True)
+        try:
+            window.set_state(mode=MODE_SOPRANO, playing=True, summary="painting")
+            window.set_visual_hand_positions((), paint_position=(0.3, 0.65))
+            before = window.music_painting._canvas.pixelColor(480, 650)
+            window.on_music_event(
+                pitch=72, velocity=100, voices=1,
+                duration_ticks=16, mode=MODE_SOPRANO,
+            )
+            self.assertEqual(window.music_painting.mark_count, 1)
+            self.assertNotEqual(
+                window.music_painting._canvas.pixelColor(480, 650), before
+            )
+            self.assertEqual(window.music_painting._marks[0].x, 0.3)
+            self.assertEqual(window.music_painting._marks[0].duration_ticks, 16)
+            window.set_painting_enabled(True)
+            self.assertIs(window.visual_stack.currentWidget(), window.music_painting)
+            self.assertEqual(window.visual_title.text(), "Music painting")
+
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "painting.png"
+                self.assertTrue(window.music_painting.save_png(path))
+                self.assertEqual(QtGui.QImage(str(path)).width(), 1600)
+
+            window.set_state(mode=MODE_FULL, playing=True, summary="full")
+            self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
+            window.set_state(mode=MODE_SOPRANO, playing=True, summary="again")
+            self.assertIs(window.visual_stack.currentWidget(), window.music_painting)
+            window.set_painting_enabled(False)
+            self.assertIs(window.visual_stack.currentWidget(), window.piano_roll)
+            self.assertEqual(window.music_painting.mark_count, 1)
         finally:
             window.close()
 
