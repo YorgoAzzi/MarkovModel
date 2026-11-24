@@ -15,6 +15,7 @@ from hand_movement import (
     StableChordGesture,
     HandAccelerationPeakDetector,
     HandMelodyHeight,
+    SharedDownstrokeConductor,
     ConductorTiltStepDetector,
     TiltQualityClassifier,
     chord_degree_for_fingers,
@@ -176,6 +177,28 @@ class LeftHandTests(unittest.TestCase):
 
 
 class ConductorMovementTests(unittest.TestCase):
+    def test_shared_downstroke_requires_fist_and_both_hands_descending(self):
+        positions = (0.50, 0.51, 0.54, 0.59, 0.65, 0.67)
+
+        def count_beats(*, fist, move_other):
+            conductor = SharedDownstrokeConductor(
+                acceleration_threshold=1.0, minimum_speed=0.05,
+            )
+            base = hand_with_direction(0.5, 0.5)
+            beats = []
+            for index, y in enumerate(positions):
+                chord_hand = shifted_hand(base, dy=y - 0.50)
+                other_y = y if move_other else 0.50
+                other_hand = shifted_hand(base, dy=other_y - 0.50)
+                beat, _motion = conductor.update(
+                    chord_hand, other_hand, fist, index * 0.033)
+                beats.append(beat.triggered)
+            return sum(beats)
+
+        self.assertEqual(count_beats(fist=True, move_other=True), 1)
+        self.assertEqual(count_beats(fist=False, move_other=True), 0)
+        self.assertEqual(count_beats(fist=True, move_other=False), 0)
+
     def test_left_finger_intervals_and_fist(self):
         patterns = (
             ((False, True, False, False, False), ("scale", 1)),

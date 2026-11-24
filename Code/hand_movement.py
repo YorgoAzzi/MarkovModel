@@ -748,6 +748,8 @@ class RightHandConductor:
         self,
         right_hand: Optional[HandObservation],
         timestamp: float,
+        *,
+        enabled: bool = True,
     ) -> tuple[ConductorBeat, HandMotion]:
         timestamp = float(timestamp)
         motion = (
@@ -755,7 +757,7 @@ class RightHandConductor:
             if right_hand is not None
             else self.detector.missing(timestamp)
         )
-        if not motion.peak:
+        if not motion.peak or not enabled:
             return ConductorBeat(False, timestamp), motion
 
         tempo = self._tempo_bpm
@@ -788,6 +790,78 @@ class RightHandConductor:
                 simultaneous=False,
                 tempo_bpm=tempo,
             ),
+            motion,
+        )
+
+
+class SharedDownstrokeConductor:
+    """Accept a beat when both hands descend while the interval hand is a fist."""
+
+    def __init__(
+        self,
+        *,
+        acceleration_threshold: float = 2.5,
+        minimum_speed: float = 0.12,
+        hand_refractory_seconds: float = 0.18,
+        synchrony_seconds: float = 0.12,
+        minimum_tempo: float = 35.0,
+        maximum_tempo: float = 200.0,
+        downward_only: bool = True,
+    ):
+        self.primary = RightHandConductor(
+            acceleration_threshold=acceleration_threshold,
+            minimum_speed=minimum_speed,
+            hand_refractory_seconds=hand_refractory_seconds,
+            minimum_tempo=minimum_tempo,
+            maximum_tempo=maximum_tempo,
+            downward_only=downward_only,
+        )
+        self.secondary = HandAccelerationPeakDetector(
+            minimum_speed=minimum_speed,
+            downward_only=True,
+        )
+        self.minimum_speed = max(0.0, float(minimum_speed))
+        self.synchrony_seconds = max(0.01, float(synchrony_seconds))
+        self._last_secondary_down: Optional[float] = None
+
+    def reset(self) -> None:
+        self.primary.reset()
+        self.secondary.reset()
+        self._last_secondary_down = None
+
+    def update(
+        self,
+        chord_hand: Optional[HandObservation],
+        interval_hand: Optional[HandObservation],
+        fist: bool,
+        timestamp: float,
+    ) -> tuple[ConductorBeat, HandMotion]:
+        timestamp = float(timestamp)
+        other = (
+            self.secondary.update(interval_hand, timestamp)
+            if interval_hand is not None
+            else self.secondary.missing(timestamp)
+        )
+        if not fist or interval_hand is None:
+            self._last_secondary_down = None
+        elif (
+            other.vertical_velocity >= self.minimum_speed
+            and other.vertical_velocity >= 0.6 * other.speed
+        ):
+            self._last_secondary_down = timestamp
+        together = (
+            fist
+            and interval_hand is not None
+            and self._last_secondary_down is not None
+            and timestamp - self._last_secondary_down <= self.synchrony_seconds
+        )
+        beat, motion = self.primary.update(chord_hand, timestamp, enabled=together)
+        if not beat.triggered:
+            return beat, motion
+        return (
+            ConductorBeat(True, timestamp, hands=("left", "right"),
+                          strength=beat.strength, simultaneous=True,
+                          tempo_bpm=beat.tempo_bpm),
             motion,
         )
 

@@ -262,10 +262,11 @@ chord.
 
 **Conductor mode** makes generation event-driven:
 
-- A smoothed acceleration peak during a downward right-hand stroke advances
-  the accompaniment by one beat. Left-hand acceleration, upward recovery, and
-  sideways motion are ignored. Without an accepted right-hand downstroke, the
-  current notes remain sustained and the Markov engine does not advance.
+- Close the left hand into a fist and move both hands downward together to
+  advance the accompaniment by one beat. The left fist arms the chord stroke;
+  the right-hand acceleration peak sets its timing, and recent left-hand
+  downward motion confirms both hands participated. Ordinary right-hand
+  melody movement cannot trigger a beat while the left hand is open.
 - The time between accepted peaks estimates the performance tempo.
 - Right-hand finger patterns select all seven degrees: index, index+middle,
   index+middle+ring, index+middle+ring+pinky, all five fingers, thumb, and
@@ -273,25 +274,25 @@ chord.
 - At every accepted beat, the current chord gesture is sampled and applied as
   a diatonic chord in the selected key and mode. An unmapped gesture holds the
   previous degree.
-- Until the next beat, moving the left hand upward or downward produces
-  successive ascending or descending soprano scale notes. Right-hand height
-  does not affect the melody.
-- Melody-hand fingers choose the interval: index moves one scale note,
+- Between beats, moving the right hand upward or downward plays an ascending
+  or descending soprano melody. The left hand chooses its intervals.
+- Left-hand fingers choose the interval: index moves one scale note,
   index+middle moves two scale notes, three extended fingers move three,
   four move four, and all five move five. Thumb alone moves through the
   current chord tones one note per vertical step (for C major, C upward
   goes to E, G, C; C downward goes to G, E, C).
-- Tilting the melody hand right plays one semitone up; tilting left plays one
+- Tilting the left hand right plays one semitone up; tilting left plays one
   semitone down. Bring the hand upright before another tilt step. This can
   reach pitches outside the selected scale.
-- A closed fist mutes the soprano and lets the performer return the hand to
-  its starting height in silence. Opening the fist restarts the note where
+- A closed left fist mutes the soprano and lets the performer reposition the
+  right hand in silence. Opening the fist restarts the note where
   the arpeggio began, ready for another upward or downward run.
 - Moving the hands apart raises MIDI expression even on held notes and biases
   the next accompaniment chord toward wider spacing. Bringing them together
   lowers expression and brings the voices closer.
-- **Swap hand roles [H]** exchanges the beat/chord and melody hands while the
-  camera keeps running. It resets motion detection to avoid a false beat.
+- **Swap hand roles [H]** exchanges the hands' chord/finger and melody-height
+  roles while the camera keeps running. The fist and shared downstroke then
+  use the opposite hands. Motion detection resets to avoid a false beat.
 
 Forward/backward brightness control has been removed from the hand interface.
 
@@ -319,7 +320,8 @@ In Conductor mode, tune peak sensitivity with `--conductor-acceleration` and
 raise them if ordinary movement produces beats. `--conductor-refractory`
 prevents repeated peaks from one stroke. Downward-only detection is enabled by
 default; `--conductor-any-direction` allows right-hand peaks in any direction
-for comparison.
+for comparison. The minimum-speed setting also applies to the other hand's
+downward-motion confirmation.
 
 ### Live music visualization
 

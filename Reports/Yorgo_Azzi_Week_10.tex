@@ -1,0 +1,121 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist[itemize]{topsep=0.2em,itemsep=0.25em}
+
+\definecolor{linkblue}{HTML}{1F4E79}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkblue,
+    urlcolor=linkblue,
+    pdftitle={VIP Week 10 Report},
+    pdfauthor={Yorgo Azzi}
+}
+
+\begin{document}
+
+\begin{center}
+    {\Large\bfseries VIP Week 10 Report}\\[0.5em]
+    {\large Yorgo Azzi}\\[0.25em]
+    November 24, 2026
+\end{center}
+
+\section{Overview}
+
+This week, I refined the movement-controlled Conductor mode to give the
+performer more control over the soprano melody and the sound of the three
+generated accompaniment voices. The right hand still commands the beat and
+selects chords, while the left hand performs the melody. I also added a button
+that exchanges these roles during a performance.
+
+\section{Work Completed}
+
+\subsection{More Expressive Melody Gestures}
+
+Vertical movement of the melody hand still determines whether the soprano
+ascends or descends. Finger gestures now determine how far each movement goes:
+the index finger moves one scale note, index and middle move two, and adding
+more fingers increases the jump to three, four, or five scale notes. This lets
+the performer move between nearby notes and larger leaps without changing the
+underlying Markov accompaniment.
+
+The thumb alone now plays an arpeggio through the current chord. For example,
+starting on C over a C-major chord, upward movements produce E, G, and the
+next C; downward movements produce the G, E, and C below. Tilting the melody
+hand right or left plays one semitone up or down from the current pitch. The
+hand must return near upright before another tilt step is accepted, reducing
+repeated notes caused by tracking noise.
+
+A closed fist now mutes only the soprano. This allows the performer to return
+the hand to its starting height without sounding descending notes. Opening
+the fist restarts the note from which the arpeggio began, ready for another
+run. The earlier horizontal-position register control was removed to keep the
+gesture mapping simpler.
+
+\subsection{Hand Distance and Role Switching}
+
+The distance between the hands now controls two aspects of the output.
+Moving the hands apart increases MIDI expression, so even a held note can
+grow louder, and encourages wider spacing between the accompaniment voices
+at the next generated beat. Bringing the hands together produces a quieter,
+more compact sound.
+
+A \textbf{Swap hand roles} button and keyboard shortcut exchange the musical
+functions of the hands. The new beat hand controls the conducting stroke and
+chord fingers, while the other hand controls the melody. Motion tracking is
+reset when the roles change so the switch itself does not create a false beat.
+The same camera and MediaPipe tracker continue running.
+
+\section{Results}
+
+\begin{itemize}
+    \item The performer can choose between short scale movements, larger
+    melodic jumps, chord arpeggios, and semitone adjustments.
+    \item The fist provides a silent way to reposition the melody hand before
+    repeating an arpeggio.
+    \item Hand distance affects held-note loudness immediately and influences
+    accompaniment spacing when the next chord is generated.
+    \item The performer can switch which hand controls the beat and which
+    controls the melody without restarting the application.
+    \item Automated gesture, audio-event, interface, and music-generation
+    checks passed. The new mappings still need evaluation with a physical
+    webcam and performer.
+\end{itemize}
+
+\section{Challenges}
+
+Several gestures depend on reliable MediaPipe finger and palm-angle estimates.
+In particular, the thumb must be distinguished from a closed fist, and a
+deliberate tilt must be distinguished from small changes in hand posture.
+The fist gesture also needs to mute promptly enough that returning the hand
+to its starting position feels natural. These details require live testing
+and adjustment of thresholds.
+
+Hand distance currently controls both loudness and accompaniment spread.
+Although both changes suggest a larger musical sound, performer trials are
+needed to determine whether this combined mapping is clear and useful.
+
+\section{Next Steps}
+
+\begin{itemize}
+    \item Explore gestures in which both hands move together, and test whether
+    the distance between them can determine whether the movement controls a
+    chord or the melody.
+    \item Profile the visual rendering path and investigate faster drawing,
+    including OpenGL or Vulkan where appropriate, so visual feedback keeps up
+    with the performance.
+    \item Add 3D particle effects that respond to musical events and hand
+    movement, while keeping the camera and audio response responsive.
+\end{itemize}
+
+\end{document}
