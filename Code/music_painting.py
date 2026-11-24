@@ -61,6 +61,14 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
     def mark_count(self) -> int:
         return len(self._marks)
 
+    def clear(self) -> None:
+        """Start a new painting without changing previously saved PNG files."""
+        self._marks.clear()
+        self._last_point = None
+        self._rng.seed(0xA27)
+        self._paint_background()
+        self.update()
+
     def _paint_background(self) -> None:
         painter = QtGui.QPainter(self._canvas)
         gradient = QtGui.QLinearGradient(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)

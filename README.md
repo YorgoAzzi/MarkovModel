@@ -348,8 +348,10 @@ the same chord use the same color, and a new chord changes the paint color.
 Note duration sets stroke length, velocity sets brush width,
 and simultaneous voices add more shapes. The artwork keeps growing while you
 switch between the painting and piano roll. Click **Save PNG** to write the
-current image to the project's `Paintings/` directory. The Full SATB score and
-the optional camera particle overlay remain separate.
+current image to the project's `Paintings/` directory. Click **Clear painting**
+to erase the in-session canvas and start a fresh image without stopping the
+music or deleting saved PNGs. The Full SATB score and the optional camera
+particle overlay remain separate.
 
 Click **Music visuals** or press **V** to show particles over the live camera
 image, centered on the hands that MediaPipe tracks. Generated note onsets

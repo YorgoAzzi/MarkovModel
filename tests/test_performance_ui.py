@@ -181,6 +181,27 @@ class IntegratedWindowTests(unittest.TestCase):
                 path = Path(directory) / "painting.png"
                 self.assertTrue(window.music_painting.save_png(path))
                 self.assertEqual(QtGui.QImage(str(path)).width(), 1600)
+                self.assertTrue(window.clear_painting_button.isEnabled())
+                window.clear_painting_button.click()
+                self.assertEqual(window.music_painting.mark_count, 0)
+                self.assertEqual(
+                    window.music_painting._canvas.pixelColor(480, 650), before
+                )
+                self.assertNotEqual(QtGui.QImage(str(path)).pixelColor(480, 650), before)
+                self.assertFalse(window.clear_painting_button.isEnabled())
+                window.on_music_event(
+                    pitch=72, velocity=100, voices=1,
+                    mode=MODE_SOPRANO, chord=(0, "maj"),
+                    event_time=window._painting_clear_time - 0.01,
+                )
+                self.assertEqual(window.music_painting.mark_count, 0)
+                window.on_music_event(
+                    pitch=72, velocity=100, voices=1,
+                    mode=MODE_SOPRANO, chord=(0, "maj"),
+                    event_time=window._painting_clear_time + 0.01,
+                )
+                self.assertEqual(window.music_painting.mark_count, 1)
+                self.assertTrue(window.clear_painting_button.isEnabled())
 
             window.set_state(mode=MODE_FULL, playing=True, summary="full")
             self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
@@ -188,7 +209,7 @@ class IntegratedWindowTests(unittest.TestCase):
             self.assertIs(window.visual_stack.currentWidget(), window.music_painting)
             window.set_painting_enabled(False)
             self.assertIs(window.visual_stack.currentWidget(), window.piano_roll)
-            self.assertEqual(window.music_painting.mark_count, 3)
+            self.assertEqual(window.music_painting.mark_count, 1)
         finally:
             window.close()
 
