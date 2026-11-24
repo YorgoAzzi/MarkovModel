@@ -207,7 +207,7 @@ class ConductorMovementTests(unittest.TestCase):
             ((False, True, True, True, False), ("scale", 3)),
             ((False, True, True, True, True), ("scale", 4)),
             ((True, True, True, True, True), ("scale", 5)),
-            ((False,) * 5, ("mute", 0)),
+            ((False,) * 5, ("hold", 0)),
         )
         for fingers, expected in patterns:
             self.assertEqual(conductor_melody_gesture(fingers), expected)

@@ -354,7 +354,7 @@ def conductor_melody_gesture(fingers: Sequence[bool]) -> tuple[str, int] | None:
         (False, True, True, True, False): ("scale", 3),
         (False, True, True, True, True): ("scale", 4),
         (True, True, True, True, True): ("scale", 5),
-        (False, False, False, False, False): ("mute", 0),
+        (False, False, False, False, False): ("hold", 0),
     }
     return gestures.get(pattern)
 

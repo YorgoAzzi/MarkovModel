@@ -62,9 +62,7 @@ class SopranoGestureController:
         self._reset_motion_state()
 
     def _reset_motion_state(self) -> None:
-        self._conductor_muted = False
-        self._conductor_phrase_start: Optional[int] = None
-        self._conductor_last_kind = None
+        self._conductor_held = False
         self.last_x: Optional[float] = None
         self.last_y: Optional[float] = None
         self.last_motion_timestamp: Optional[float] = None
@@ -256,18 +254,17 @@ class SopranoGestureController:
     ) -> SopranoStep:
         """Play one conductor melody command, independent of Soprano mode poses."""
         with self.lock:
-            if self._conductor_muted:
-                return SopranoStep(None, False, False, max(1, ticks_per_beat * 4),
-                                   "fist/mute")
+            if self._conductor_held:
+                return SopranoStep(
+                    self.active_pitch, False, False, max(1, ticks_per_beat * 4),
+                    "fist/hold", sustain=self.active_pitch is not None,
+                )
             base = self.active_pitch
             if base is None:
                 base = self.scale[self.scale_index]
             pitch = base
             kind, size = gesture or ("scale", 1)
             if direction:
-                if kind == "arpeggio" and self._conductor_last_kind != "arpeggio":
-                    self._conductor_phrase_start = base
-                self._conductor_last_kind = kind
                 sign = 1 if direction > 0 else -1
                 if kind == "semitone":
                     pitch = base + sign
@@ -293,31 +290,24 @@ class SopranoGestureController:
             return SopranoStep(pitch, onset, False, max(1, ticks_per_beat * 4),
                                self.gesture, sustain=True)
 
-    def conductor_mute(self, muted: bool, *, ticks_per_beat: int = 16) -> SopranoStep:
-        """Silence the soprano; restore the arpeggio start after repositioning."""
+    def conductor_hold(self, held: bool, *, ticks_per_beat: int = 16) -> SopranoStep:
+        """Hold the current soprano pitch while the gesture hand is a fist."""
         with self.lock:
             duration = max(1, ticks_per_beat * 4)
-            if muted:
-                if not self._conductor_muted and self._conductor_phrase_start is None:
-                    self._conductor_phrase_start = self.active_pitch
-                released = self.active_pitch is not None
-                self._conductor_muted = True
-                self.active_pitch = None
+            self._conductor_held = bool(held)
+            if held:
+                self.gesture = "fist/hold"
+                return SopranoStep(self.active_pitch, False, False, duration,
+                                   self.gesture, sustain=self.active_pitch is not None)
+            if self.active_pitch is None:
+                self.active_pitch = self.scale[self.scale_index]
                 self.force_onset = False
-                self._conductor_last_kind = None
-                self.gesture = "fist/mute"
-                return SopranoStep(None, False, released, duration, self.gesture)
-            if not self._conductor_muted:
-                return SopranoStep(self.active_pitch, False, False, duration, self.gesture,
-                                   sustain=self.active_pitch is not None)
-            self._conductor_muted = False
-            pitch = self._conductor_phrase_start
-            if pitch is None:
-                pitch = self.scale[self.scale_index]
-            self.active_pitch = pitch
-            self.force_onset = False
-            self.gesture = "phrase restart"
-            return SopranoStep(pitch, True, False, duration, self.gesture, sustain=True)
+                self.gesture = "holding"
+                return SopranoStep(self.active_pitch, True, False, duration,
+                                   self.gesture, sustain=True)
+            self.gesture = "holding"
+            return SopranoStep(self.active_pitch, False, False, duration,
+                               self.gesture, sustain=True)
 
     def synchronize(
         self,

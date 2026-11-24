@@ -120,7 +120,7 @@ class PerformanceSession:
         simultaneous: bool = False,
         tempo_bpm=None,
         timestamp: float = 0.0,
-        muted: bool = False,
+        held: bool = False,
     ) -> bool:
         if degree is not None and not 1 <= int(degree) <= 7:
             raise ValueError("Conductor chord degree must be between 1 and 7")
@@ -135,7 +135,7 @@ class PerformanceSession:
                     "simultaneous": bool(simultaneous),
                     "tempo_bpm": None if tempo_bpm is None else float(tempo_bpm),
                     "timestamp": float(timestamp),
-                    "muted": bool(muted),
+                    "held": bool(held),
                 }
             )
             self._condition.notify()
@@ -191,7 +191,7 @@ class PerformanceSession:
             self._condition.notify()
             return True
 
-    def request_conductor_mute(self, muted: bool, *, timestamp: float = 0.0) -> bool:
+    def request_conductor_hold(self, held: bool, *, timestamp: float = 0.0) -> bool:
         with self._condition:
             if self._mode != MODE_CONDUCTOR or not self._playing:
                 return False
@@ -199,7 +199,7 @@ class PerformanceSession:
                 event for event in self._conductor_events
                 if event["kind"] != "melody"
             )
-            self._conductor_events.append({"kind": "mute", "muted": bool(muted),
+            self._conductor_events.append({"kind": "hold", "held": bool(held),
                                            "timestamp": float(timestamp)})
             self._condition.notify()
             return True
@@ -280,8 +280,8 @@ class PerformanceSession:
                     + (16 if frame.controls.accent else 0)
                 )))),
             )
-            if event["muted"]:
-                self.soprano.conductor_mute(True,
+            if event["held"]:
+                self.soprano.conductor_hold(True,
                     ticks_per_beat=self.engine.ticks_per_beat)
             step = self.soprano.conductor_note(
                 ticks_per_beat=self.engine.ticks_per_beat,
@@ -329,9 +329,9 @@ class PerformanceSession:
             self._conductor_beat_tick + offset,
         )
         base = self._conductor_last_frame
-        if event["kind"] == "mute":
-            step = self.soprano.conductor_mute(
-                event["muted"], ticks_per_beat=self.engine.ticks_per_beat)
+        if event["kind"] == "hold":
+            step = self.soprano.conductor_hold(
+                event["held"], ticks_per_beat=self.engine.ticks_per_beat)
         else:
             step = self.soprano.conductor_note(
                 direction=event["direction"],

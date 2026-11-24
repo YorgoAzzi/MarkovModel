@@ -345,7 +345,7 @@ def main():
     roles_swapped = False
     beat_fingers = (False,) * 5
     melody_fingers = (False,) * 5
-    melody_muted = False
+    melody_held = False
     distance_control = 0.5
     last_expression_value = None
     last_expression_time = -1.0
@@ -398,7 +398,7 @@ def main():
     print("Full SATB: left controls activity/tempo/articulation; right controls register/chords.")
     print("Soprano Performance: left controls accompaniment register/tempo/articulation; right performs soprano.")
     print("Conductor: hold the left fist and move both hands down for a chord beat; right fingers select degrees 1-7.")
-    print("Conductor melody: right-hand height sets direction; left fingers choose jumps, thumb arpeggiates, fist mutes, left tilt moves one semitone.")
+    print("Conductor melody: right-hand height sets direction; left fingers choose jumps, thumb arpeggiates, fist holds the last note, left tilt moves one semitone.")
     print("Hand separation controls expression and accompaniment spacing; Swap hand roles or H exchanges roles.")
     print("Soprano fingers: 1=piano, 2=violin, 3=choir, 4=flute, 5=synth pad; shake=trill, index tap=mordent.")
     print("Magenta: use the window controls to enable accompaniment and select soprano/all input.")
@@ -465,7 +465,7 @@ def main():
                     conductor_tilt.reset()
                     beat_finger_filter = FingerStateFilter()
                     melody_finger_filter = FingerStateFilter()
-                    melody_muted = False
+                    melody_held = False
                     conductor_motion = None
                     last_conductor_beat = None
                     conductor_degree = None
@@ -612,16 +612,16 @@ def main():
                     melody_y = None if chord_hand is None else palm_center(chord_hand)[1]
                     melody_gesture = conductor_melody_gesture(melody_fingers)
                     fist_now = (
-                        melody_gesture == ("mute", 0)
-                        if interval_hand is not None else melody_muted
+                        melody_gesture == ("hold", 0)
+                        if interval_hand is not None else melody_held
                     )
-                    mute_changed = fist_now != melody_muted
-                    if mute_changed:
-                        melody_muted = fist_now
+                    hold_changed = fist_now != melody_held
+                    if hold_changed:
+                        melody_held = fist_now
                         conductor_melody.start_beat(melody_y)
                         conductor_tilt.reset()
                         if session.is_playing:
-                            session.request_conductor_mute(fist_now, timestamp=result.timestamp)
+                            session.request_conductor_hold(fist_now, timestamp=result.timestamp)
                     if left_hand is not None and right_hand is not None:
                         distance_control = hand_distance_control(left_hand, right_hand)
                         if (last_expression_value is None
@@ -634,7 +634,7 @@ def main():
                             last_expression_value = distance_control
                             last_expression_time = result.timestamp
                     beat, conductor_motion = conductor.update(
-                        chord_hand, interval_hand, melody_muted, result.timestamp
+                        chord_hand, interval_hand, melody_held, result.timestamp
                     )
                     if beat.triggered and session.is_playing:
                         sampled_degree = chord_degree_for_fingers(beat_fingers)
@@ -646,7 +646,7 @@ def main():
                             simultaneous=beat.simultaneous,
                             tempo_bpm=beat.tempo_bpm,
                             timestamp=beat.timestamp,
-                            muted=melody_muted,
+                            held=melody_held,
                         )
                         conductor_melody.start_beat(melody_y)
                         last_conductor_beat = beat
@@ -657,8 +657,8 @@ def main():
                             f"degree={conductor_degree or 'learned'} "
                             f"strength={beat.strength:.2f}"
                         )
-                    elif session.is_playing and chord_hand is not None and not melody_muted:
-                        if not mute_changed:
+                    elif session.is_playing and chord_hand is not None and not melody_held:
+                        if not hold_changed:
                             tilt_step = (
                                 conductor_tilt.update(
                                     hand_tilt_degrees(interval_hand), result.timestamp)
@@ -669,7 +669,7 @@ def main():
                                     tilt_step, timestamp=result.timestamp,
                                     gesture=("semitone", 1))
                                 conductor_melody.start_beat(melody_y)
-                        if not mute_changed and not tilt_step:
+                        if not hold_changed and not tilt_step:
                             for direction in conductor_melody.update(melody_y):
                                 session.request_conductor_melody_step(
                                     direction,

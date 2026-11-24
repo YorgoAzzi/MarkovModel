@@ -49,21 +49,24 @@ class SopranoGestureTests(unittest.TestCase):
         self.assertEqual(controller.conductor_note(direction=-1,
             gesture=("semitone", 1), chord=CHORD).pitch, 73)
 
-    def test_fist_mutes_and_restores_arpeggio_start_without_downward_notes(self):
+    def test_fist_holds_last_note_and_ignores_movement(self):
         controller = self.controller
         controller.conductor_note(chord=CHORD)
         controller.conductor_note(direction=1, gesture=("arpeggio", 1), chord=CHORD)
         controller.conductor_note(direction=1, gesture=("arpeggio", 1), chord=CHORD)
-        muted = controller.conductor_mute(True)
-        self.assertTrue(muted.released)
-        self.assertIsNone(muted.pitch)
-        self.assertIsNone(controller.conductor_note(direction=-1,
-            gesture=("arpeggio", 1), chord=CHORD).pitch)
-        restarted = controller.conductor_mute(False)
-        self.assertEqual(restarted.pitch, 72)
-        self.assertTrue(restarted.onset)
+        held = controller.conductor_hold(True)
+        self.assertEqual(held.pitch, 79)
+        self.assertTrue(held.sustain)
+        self.assertFalse(held.released)
+        ignored = controller.conductor_note(direction=-1,
+            gesture=("arpeggio", 1), chord=CHORD)
+        self.assertEqual(ignored.pitch, 79)
+        self.assertFalse(ignored.onset)
+        restarted = controller.conductor_hold(False)
+        self.assertEqual(restarted.pitch, 79)
+        self.assertFalse(restarted.onset)
         self.assertEqual(controller.conductor_note(direction=1,
-            gesture=("arpeggio", 1), chord=CHORD).pitch, 76)
+            gesture=("arpeggio", 1), chord=CHORD).pitch, 84)
 
     def observe(
         self,
@@ -278,17 +281,19 @@ class SessionIntegrationTests(unittest.TestCase):
             gesture=("arpeggio", 1))
         arpeggio = session.wait_for_frame(stop_event, timeout=0.001)
         self.assertGreater(arpeggio.pitches["soprano"], phrase_start)
-        session.request_conductor_mute(True, timestamp=1.8)
-        silence = session.wait_for_frame(stop_event, timeout=0.001)
-        self.assertEqual(silence.released_voices, frozenset({"soprano"}))
-        self.assertNotIn("soprano", silence.pitches)
-        session.request_conductor_beat(degree=1, muted=True, timestamp=2.0)
-        muted_beat = session.wait_for_frame(stop_event, timeout=0.001)
-        self.assertNotIn("soprano", muted_beat.new_voices)
-        session.request_conductor_mute(False, timestamp=2.1)
-        restart = session.wait_for_frame(stop_event, timeout=0.001)
-        self.assertEqual(restart.pitches["soprano"], phrase_start)
-        self.assertEqual(restart.new_voices, frozenset({"soprano"}))
+        session.request_conductor_hold(True, timestamp=1.8)
+        hold = session.wait_for_frame(stop_event, timeout=0.001)
+        self.assertEqual(hold.released_voices, frozenset())
+        self.assertEqual(hold.pitches["soprano"], arpeggio.pitches["soprano"])
+        self.assertIn("soprano", hold.sustained_voices)
+        session.request_conductor_beat(degree=1, held=True, timestamp=2.0)
+        held_beat = session.wait_for_frame(stop_event, timeout=0.001)
+        self.assertNotIn("soprano", held_beat.new_voices)
+        self.assertIn("soprano", held_beat.sustained_voices)
+        session.request_conductor_hold(False, timestamp=2.1)
+        resumed = session.wait_for_frame(stop_event, timeout=0.001)
+        self.assertEqual(resumed.pitches["soprano"], arpeggio.pitches["soprano"])
+        self.assertNotIn("soprano", resumed.new_voices)
 
 
 if __name__ == "__main__":

@@ -284,9 +284,9 @@ chord.
 - Tilting the left hand right plays one semitone up; tilting left plays one
   semitone down. Bring the hand upright before another tilt step. This can
   reach pitches outside the selected scale.
-- A closed left fist mutes the soprano and lets the performer reposition the
-  right hand in silence. Opening the fist restarts the note where
-  the arpeggio began, ready for another upward or downward run.
+- A closed left fist sustains the last soprano note while ignoring height and
+  tilt gestures. The performer can reposition the right hand without changing
+  the pitch. Opening the fist resumes melody control from that held note.
 - Moving the hands apart raises MIDI expression even on held notes and biases
   the next accompaniment chord toward wider spacing. Bringing them together
   lowers expression and brings the voices closer.
