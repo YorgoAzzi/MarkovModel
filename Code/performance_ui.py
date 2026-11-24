@@ -582,6 +582,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
     def on_music_event(
         self, *, pitch: int, velocity: int, voices: int,
         duration_ticks: int = 1, mode: str | None = None,
+        chord: tuple[int, str] | None = None,
     ) -> None:
         """Deliver a MIDI onset to the optional visual on the Qt UI thread."""
         if self._effects_enabled and self._effects_view is not None:
@@ -591,7 +592,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             self.music_painting.add_note(
                 pitch=pitch, velocity=velocity,
                 duration_ticks=duration_ticks, voices=voices,
-                position=self._paint_position,
+                position=self._paint_position, chord=chord,
             )
             self._painting_saved_message = None
             if self._painting_enabled:

@@ -343,7 +343,9 @@ Performance and Conductor modes but do not appear in the piano roll.
 In Soprano Performance or Conductor mode, click **Music painting** or press
 **P** to show a growing artwork in place of the piano roll. Each generated
 onset adds a lasting brush stroke at the melody hand's camera position. Pitch
-sets the color, note duration sets stroke length, velocity sets brush width,
+changes the stroke direction; the active chord sets its color. All notes under
+the same chord use the same color, and a new chord changes the paint color.
+Note duration sets stroke length, velocity sets brush width,
 and simultaneous voices add more shapes. The artwork keeps growing while you
 switch between the painting and piano roll. Click **Save PNG** to write the
 current image to the project's `Paintings/` directory. The Full SATB score and

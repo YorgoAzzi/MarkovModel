@@ -12,11 +12,31 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 CANVAS_WIDTH = 1600
 CANVAS_HEIGHT = 1000
+CHORD_QUALITY_COLORS = {
+    "maj": (0, 185, 215),
+    "min": (10, 165, 180),
+    "dim": (20, 215, 170),
+    "7": (5, 220, 205),
+    "maj7": (15, 145, 225),
+    "min7": (25, 150, 185),
+}
+
+
+def color_for_chord(chord: tuple[int, str]) -> QtGui.QColor:
+    """Give each root and quality a stable color, independent of note pitch."""
+    root, quality = chord
+    hue_offset, saturation, value = CHORD_QUALITY_COLORS.get(
+        str(quality).lower(), (0, 185, 205)
+    )
+    return QtGui.QColor.fromHsv(
+        (int(root) % 12 * 30 + hue_offset) % 360, saturation, value
+    )
 
 
 @dataclass(frozen=True)
 class PaintMark:
     pitch: int
+    chord: tuple[int, str]
     velocity: int
     duration_ticks: int
     voices: int
@@ -57,6 +77,7 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
         duration_ticks: int,
         voices: int,
         position: tuple[float, float],
+        chord: tuple[int, str] | None = None,
     ) -> None:
         """Paint one lasting stroke when the generated music begins a note."""
         raw_x, raw_y = position
@@ -66,8 +87,14 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
             return
         x = max(0.04, min(0.96, x))
         y = max(0.04, min(0.96, y))
+        chord_identity = (
+            (int(chord[0]) % 12, str(chord[1]).lower())
+            if chord is not None
+            else (int(pitch) % 12, "maj")
+        )
         mark = PaintMark(
             pitch=int(pitch),
+            chord=chord_identity,
             velocity=max(0, min(127, int(velocity))),
             duration_ticks=max(1, int(duration_ticks)),
             voices=max(1, int(voices)),
@@ -82,8 +109,7 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
         painter = QtGui.QPainter(self._canvas)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         center = QtCore.QPointF(mark.x * CANVAS_WIDTH, mark.y * CANVAS_HEIGHT)
-        hue = (mark.pitch % 12) * 30
-        color = QtGui.QColor.fromHsv(hue, 175, 205)
+        color = color_for_chord(mark.chord)
         width = 7.0 + mark.velocity * 0.14
         length = 22.0 + min(64, mark.duration_ticks) * 2.15
 

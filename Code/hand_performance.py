@@ -386,9 +386,10 @@ def main():
         duration_ticks = frame.voice_duration_ticks.get(
             voice, frame.planned_duration_ticks
         )
+        chord = (int(frame.chord[0]), str(frame.chord[1]))
         try:
             visual_events.put_nowait(
-                (int(pitch), frame.velocity, voices, duration_ticks, session.mode)
+                (int(pitch), frame.velocity, voices, duration_ticks, session.mode, chord)
             )
         except Full:
             pass  # Visual overload must never delay MIDI playback.
@@ -882,12 +883,12 @@ def main():
             )
             while True:
                 try:
-                    pitch, velocity, voices, duration_ticks, source_mode = visual_events.get_nowait()
+                    pitch, velocity, voices, duration_ticks, source_mode, chord = visual_events.get_nowait()
                 except Empty:
                     break
                 window.on_music_event(
                     pitch=pitch, velocity=velocity, voices=voices,
-                    duration_ticks=duration_ticks, mode=source_mode,
+                    duration_ticks=duration_ticks, mode=source_mode, chord=chord,
                 )
             window.set_camera_frame(frame)
             window.set_state(
