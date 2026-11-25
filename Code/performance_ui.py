@@ -31,6 +31,11 @@ try:
 except ModuleNotFoundError:
     from .music_painting import MusicPaintingView
 
+try:
+    from opengl_visual import MusicPulseView
+except ModuleNotFoundError:
+    from .opengl_visual import MusicPulseView
+
 
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -45,9 +50,9 @@ PAINTED_SVG_TAGS = {
     f"{{{SVG_NS}}}rect",
 }
 
-PIANO_LOW = 60
-PIANO_HIGH = 84
-PIANO_ROW_HEIGHT = 24
+PIANO_LOW = 48
+PIANO_HIGH = 96
+PIANO_ROW_HEIGHT = 12
 PIANO_ROLL_HEIGHT = (PIANO_HIGH - PIANO_LOW + 1) * PIANO_ROW_HEIGHT
 BLACK_PITCH_CLASSES = {1, 3, 6, 8, 10}
 PITCH_NAMES = ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
@@ -139,7 +144,7 @@ class PianoKeyboardWidget(QtWidgets.QWidget):
             )
             painter.setPen(QtGui.QColor("#dce5ea" if black else "#455a64"))
             painter.drawRect(0, y, self.width() - 1, PIANO_ROW_HEIGHT)
-            if pitch % 12 == 0 or not black:
+            if pitch % 12 in (0, 4, 7):
                 painter.drawText(
                     5,
                     y,
@@ -298,7 +303,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.closed = False
         self._show_score = show_score
         self._effects_enabled = False
-        self._effects_view = None
+        self._effects_view = MusicPulseView()
         self._camera_image = None
         self._hand_positions = ()
         self._paint_position = (0.5, 0.5)
@@ -321,17 +326,8 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
         camera_panel = QtWidgets.QWidget()
         camera_layout = QtWidgets.QVBoxLayout(camera_panel)
-        heading = QtWidgets.QLabel("Camera and gesture tracking")
-        heading.setObjectName("heading")
-        camera_layout.addWidget(heading)
-        self.camera_label = QtWidgets.QLabel("Waiting for camera...")
-        self.camera_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.camera_label.setMinimumSize(640, 480)
-        self.camera_label.setStyleSheet(
-            "background:#111820;color:#d9e3ea;border-radius:6px;"
-        )
         self.camera_stack = QtWidgets.QStackedWidget()
-        self.camera_stack.addWidget(self.camera_label)
+        self.camera_stack.addWidget(self._effects_view)
         camera_layout.addWidget(self.camera_stack, 1)
 
         buttons = QtWidgets.QHBoxLayout()
@@ -383,10 +379,6 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         magenta_controls.addWidget(self.magenta_input)
         magenta_controls.addWidget(self.magenta_status, 1)
         camera_layout.addLayout(magenta_controls)
-        self.summary_label = QtWidgets.QLabel("Initializing performance...")
-        self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("color:#44515a;padding:5px;")
-        camera_layout.addWidget(self.summary_label)
         splitter.addWidget(camera_panel)
 
         self.score_panel = QtWidgets.QWidget()
@@ -520,24 +512,9 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
 
     def set_visual_effects_enabled(self, enabled: bool) -> None:
         """Overlay the optional visual on the camera, leaving the score visible."""
-        if enabled and self._effects_view is None:
-            try:
-                from opengl_visual import MusicPulseView
-            except ModuleNotFoundError:
-                from .opengl_visual import MusicPulseView
-            self._effects_view = MusicPulseView()
-            self.camera_stack.addWidget(self._effects_view)
         self._effects_enabled = bool(enabled)
         self.effects_button.setChecked(self._effects_enabled)
-        if self._effects_enabled:
-            self._effects_view.set_hand_positions(self._hand_positions)
-            if self._camera_image is not None:
-                self._effects_view.set_camera_image(self._camera_image)
-            self.camera_stack.setCurrentWidget(self._effects_view)
-        else:
-            self.camera_stack.setCurrentWidget(self.camera_label)
-            if self._camera_image is not None:
-                self._show_camera_image(self._camera_image)
+        self._effects_view.set_effects_enabled(self._effects_enabled)
 
     def _select_music_view(self) -> None:
         melody_view = self._mode in {MODE_SOPRANO, MODE_CONDUCTOR}
@@ -601,15 +578,19 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self, *, pitch: int, velocity: int, voices: int,
         duration_ticks: int = 1, mode: str | None = None,
         chord: tuple[int, str] | None = None,
+        soprano_onset: bool = True,
         event_time: float | None = None,
     ) -> None:
         """Deliver a MIDI onset to the optional visual on the Qt UI thread."""
-        if self._effects_enabled and self._effects_view is not None:
+        if self._effects_enabled:
             self._effects_view.pulse(pitch=pitch, velocity=velocity, voices=voices)
+
+        self.music_painting.set_chord(chord)
 
         if (
             self._show_score
             and (mode or self._mode) in {MODE_SOPRANO, MODE_CONDUCTOR}
+            and soprano_onset
             and (event_time is None or event_time > self._painting_clear_time)
         ):
             self.music_painting.add_note(
@@ -622,12 +603,20 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
                 self.clear_painting_button.setEnabled(True)
                 self.score_status.setText(f"{self.music_painting.mark_count} marks")
 
-    def set_visual_hand_positions(self, positions, *, paint_position=None) -> None:
+    def set_visual_hand_positions(self, positions, *, paint_position=None,
+                                  distance_level=None) -> None:
         self._hand_positions = tuple(positions)
         if paint_position is not None:
             self._paint_position = paint_position
-        if self._effects_enabled and self._effects_view is not None:
-            self._effects_view.set_hand_positions(self._hand_positions)
+        self._effects_view.set_hand_positions(
+            self._hand_positions, distance_level=distance_level
+        )
+
+    def set_hand_overlays(self, overlays) -> None:
+        self._effects_view.set_hand_overlays(overlays)
+
+    def set_chord_label(self, label: str) -> None:
+        self._effects_view.set_chord_label(label)
 
     def set_state(self, *, mode: str, playing: bool, summary: str) -> None:
         mode_changed = mode != self._mode
@@ -642,7 +631,6 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
         self.transport_button.setText(
             "Pause  [Space]" if playing else "Play  [Space]"
         )
-        self.summary_label.setText(summary)
 
     def set_swap_roles(self, swapped: bool) -> None:
         self.swap_roles_button.setChecked(bool(swapped))
@@ -679,20 +667,7 @@ class IntegratedPerformanceWindow(QtWidgets.QMainWindow):
             QtGui.QImage.Format_BGR888,
         ).copy()
         self._camera_image = image
-        if self._effects_enabled and self._effects_view is not None:
-            self._effects_view.set_camera_image(image)
-        else:
-            self._show_camera_image(image)
-
-    def _show_camera_image(self, image) -> None:
-        pixmap = QtGui.QPixmap.fromImage(image)
-        self.camera_label.setPixmap(
-            pixmap.scaled(
-                self.camera_label.size(),
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation,
-            )
-        )
+        self._effects_view.set_camera_image(image)
 
     def _new_score_page(self, index: int, bars_per_page: int):
         section = QtWidgets.QWidget()

@@ -18,6 +18,7 @@ def frame(
     sustained=False,
     duration=8,
     tick_index=0,
+    duration_seconds=0.05,
 ):
     return SimpleNamespace(
         pitches={"soprano": pitch},
@@ -28,6 +29,7 @@ def frame(
         voice_duration_ticks={"soprano": duration} if onset else {},
         planned_duration_ticks=duration,
         tick_index=tick_index,
+        duration_seconds=duration_seconds,
     )
 
 
@@ -93,6 +95,30 @@ class SopranoPianoRollTests(unittest.TestCase):
 
         note = roll.snapshot()["notes"][0]
         self.assertEqual((note.start_tick, note.end_tick), (0, 17))
+
+    def test_conductor_melody_advances_without_another_chord_beat(self):
+        roll = SopranoPianoRoll(ticks_per_beat=16)
+        roll.observe(frame(pitch=72, onset=True, sustained=True, tick_index=0),
+                     use_source_ticks=True, timestamp=10.0)
+        roll.observe(frame(pitch=74, onset=True, sustained=True, tick_index=3),
+                     use_source_ticks=True, timestamp=10.25)
+        roll.observe(frame(pitch=76, onset=True, sustained=True, tick_index=3),
+                     use_source_ticks=True, timestamp=11.1)
+
+        snapshot = roll.snapshot(timestamp=11.2)
+        self.assertGreater(snapshot["current_tick"], 16)
+        self.assertEqual([note.pitch for note in snapshot["notes"]], [72, 74, 76])
+        self.assertLess(snapshot["notes"][1].start_tick,
+                        snapshot["notes"][2].start_tick)
+        self.assertGreater(snapshot["notes"][2].end_tick,
+                           snapshot["notes"][2].start_tick)
+
+        paused = roll.snapshot(playing=False, timestamp=11.25)["current_tick"]
+        self.assertEqual(roll.snapshot(playing=False, timestamp=12.0)["current_tick"],
+                         paused)
+        self.assertEqual(roll.snapshot(playing=True, timestamp=12.0)["current_tick"],
+                         paused)
+        self.assertGreater(roll.snapshot(timestamp=12.2)["current_tick"], paused)
 
 
 if __name__ == "__main__":

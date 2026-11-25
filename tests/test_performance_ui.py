@@ -12,12 +12,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Code"))
 
-from PyQt5 import QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 from magenta_router import INPUT_ALL
 from music_painting import color_for_chord
 from performance_session import MODE_CONDUCTOR, MODE_FULL, MODE_SOPRANO
 from piano_roll import PianoRollNote
-from performance_ui import IntegratedPerformanceWindow, qt_compatible_svg
+from performance_ui import (
+    IntegratedPerformanceWindow, PIANO_HIGH, PIANO_LOW,
+    PIANO_ROW_HEIGHT, qt_compatible_svg,
+)
 
 
 class IntegratedWindowTests(unittest.TestCase):
@@ -57,7 +60,15 @@ class IntegratedWindowTests(unittest.TestCase):
                     "version": 1,
                 }
             )
-            self.assertIsNotNone(window.camera_label.pixmap())
+            self.assertIsNotNone(window._effects_view._camera_image)
+            self.assertIs(window.camera_stack.currentWidget(), window._effects_view)
+            window.set_chord_label("Chord: C")
+            window.set_hand_overlays((
+                (tuple((0.5, 0.5) for _ in range(21)),
+                 (True, False, False, False, False), "#00e070"),
+            ))
+            self.assertEqual(window._effects_view._chord_label, "Chord: C")
+            self.assertEqual(len(window._effects_view._hand_overlays), 1)
             self.assertTrue(window.soprano_button.isChecked())
             self.assertIn("Play", window.transport_button.text())
             self.assertEqual(window.visual_title.text(), "Soprano piano roll")
@@ -106,7 +117,7 @@ class IntegratedWindowTests(unittest.TestCase):
             self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
             self.assertIs(window.camera_stack.currentWidget(), window._effects_view)
             window.set_visual_effects_enabled(False)
-            self.assertIs(window.camera_stack.currentWidget(), window.camera_label)
+            self.assertIs(window.camera_stack.currentWidget(), window._effects_view)
             self.assertIs(window.visual_stack.currentWidget(), window.score_scroll)
         finally:
             window.close()
@@ -140,7 +151,44 @@ class IntegratedWindowTests(unittest.TestCase):
             self.assertIs(window.camera_stack.currentWidget(), window._effects_view)
             window.set_visual_effects_enabled(False)
             self.assertTrue(window.score_panel.isHidden())
-            self.assertIs(window.camera_stack.currentWidget(), window.camera_label)
+            self.assertIs(window.camera_stack.currentWidget(), window._effects_view)
+        finally:
+            window.close()
+
+    def test_hand_distance_light_grows_and_hides_when_tracking_is_lost(self):
+        window = IntegratedPerformanceWindow(show_score=False)
+        try:
+            def render(level, positions):
+                window.set_visual_hand_positions(positions, distance_level=level)
+                image = QtGui.QImage(640, 480, QtGui.QImage.Format_ARGB32)
+                image.fill(QtGui.QColor("black"))
+                painter = QtGui.QPainter(image)
+                window._effects_view._paint_hand_light(
+                    painter, QtCore.QRectF(0, 0, 640, 480)
+                )
+                painter.end()
+                return image
+
+            hands = ((0.25, 0.5), (0.75, 0.5))
+            small = render(0.0, hands)
+            large = render(1.0, hands)
+            sample = (320, 320)  # 80 pixels below the midpoint, off the beam.
+            self.assertEqual(small.pixelColor(*sample), QtGui.QColor("black"))
+            self.assertNotEqual(large.pixelColor(*sample), QtGui.QColor("black"))
+            missing = render(1.0, hands[:1])
+            self.assertEqual(missing.pixelColor(320, 240), QtGui.QColor("black"))
+        finally:
+            window.close()
+
+    def test_piano_roll_covers_the_full_performed_pitch_range(self):
+        window = IntegratedPerformanceWindow(show_score=True)
+        try:
+            self.assertEqual((PIANO_LOW, PIANO_HIGH), (48, 96))
+            self.assertEqual(window.piano_roll.canvas.height(),
+                             (PIANO_HIGH - PIANO_LOW + 1) * PIANO_ROW_HEIGHT)
+            self.assertEqual(window.piano_roll.canvas._note_y(PIANO_HIGH), 0)
+            self.assertEqual(window.piano_roll.canvas._note_y(PIANO_LOW),
+                             (PIANO_HIGH - PIANO_LOW) * PIANO_ROW_HEIGHT)
         finally:
             window.close()
 
@@ -210,6 +258,27 @@ class IntegratedWindowTests(unittest.TestCase):
             window.set_painting_enabled(False)
             self.assertIs(window.visual_stack.currentWidget(), window.piano_roll)
             self.assertEqual(window.music_painting.mark_count, 1)
+        finally:
+            window.close()
+
+    def test_chord_only_event_changes_color_without_drawing(self):
+        window = IntegratedPerformanceWindow(show_score=True)
+        try:
+            window.set_state(mode=MODE_CONDUCTOR, playing=True, summary="")
+            window.set_visual_hand_positions((), paint_position=(0.4, 0.5))
+            window.on_music_event(pitch=60, velocity=90, voices=3,
+                                  chord=(0, "maj"), soprano_onset=False)
+            self.assertEqual(window.music_painting.mark_count, 0)
+            window.on_music_event(pitch=72, velocity=90, voices=1,
+                                  soprano_onset=True)
+            self.assertEqual(window.music_painting._marks[-1].chord, (0, "maj"))
+            window.on_music_event(pitch=64, velocity=90, voices=3,
+                                  chord=(7, "maj"), soprano_onset=False)
+            self.assertEqual(window.music_painting.mark_count, 1)
+            window.on_music_event(pitch=74, velocity=90, voices=1,
+                                  soprano_onset=True)
+            self.assertEqual(window.music_painting._marks[-1].chord, (7, "maj"))
+            self.assertEqual(window.music_painting.mark_count, 2)
         finally:
             window.close()
 

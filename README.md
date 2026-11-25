@@ -223,8 +223,9 @@ to test tracking without sending MIDI.
 
 ### MediaPipe two-hand control
 
-The two-hand interface uses MediaPipe landmarks while OpenCV continues to
-capture and display the webcam image. The official hand model is stored at
+The two-hand interface uses MediaPipe landmarks while OpenCV captures webcam
+frames. A Qt OpenGL widget displays the camera image and draws the hand
+skeletons, finger markers, chord label, and optional particles. The official hand model is stored at
 `models/hand_landmarker.task`. It has three modes that can be changed without
 restarting the performance.
 
@@ -333,6 +334,9 @@ score with a soprano-only piano roll. Pitch runs vertically and time runs horizo
 blue blocks are previous notes, green is the active note, orange marks short
 ornaments, and a red line is the current playhead. A stationary hand produces
 one block that grows continuously until movement changes or releases the note.
+The roll displays the full soprano pitch range (MIDI 48--96). In Conductor
+mode, its playhead and held note continue across the time between chord beats,
+including when the performer plays new soprano notes without another downstroke.
 
 Both views retain their complete history. Four measures are visible by default,
 and older material remains available by scrolling. The display follows the
@@ -341,23 +345,27 @@ the current position. Alto, tenor, and bass continue playing in Soprano
 Performance and Conductor modes but do not appear in the piano roll.
 
 In Soprano Performance or Conductor mode, click **Music painting** or press
-**P** to show a growing artwork in place of the piano roll. Each generated
-onset adds a lasting brush stroke at the melody hand's camera position. Pitch
-changes the stroke direction; the active chord sets its color. All notes under
-the same chord use the same color, and a new chord changes the paint color.
-Note duration sets stroke length, velocity sets brush width,
-and simultaneous voices add more shapes. The artwork keeps growing while you
+**P** to show a growing artwork in place of the piano roll. Only soprano note
+onsets draw lasting, tapered brush strokes at the melody hand's camera position.
+Chord and accompaniment onsets change the brush color without adding marks.
+The next soprano stroke uses the current chord color. Note duration sets stroke
+length, velocity sets brush width, and simultaneous voices add fine companion
+strokes. The artwork keeps growing while you
 switch between the painting and piano roll. Click **Save PNG** to write the
 current image to the project's `Paintings/` directory. Click **Clear painting**
 to erase the in-session canvas and start a fresh image without stopping the
 music or deleting saved PNGs. The Full SATB score and the optional camera
 particle overlay remain separate.
 
-Click **Music visuals** or press **V** to show particles over the live camera
-image, centered on the hands that MediaPipe tracks. Generated note onsets
+The camera view shows a small label for the chord currently sounding. Hand
+landmarks are drawn over the video by the OpenGL view rather than written into
+camera frames by OpenCV. In Conductor mode, a warm light spans the two tracked
+palms. Its size and brightness follow the same hand-distance value that controls
+volume, and it disappears when either hand is lost. Click **Music visuals** or press **V** to show particles
+over the live camera image, centered on the hands that MediaPipe tracks. Generated note onsets
 trigger bursts; pitch changes their color, while velocity and the number of
-entering voices change the burst. Press **V** again to restore the plain camera
-preview. The score or piano roll remains visible beside the camera. The effect
+entering voices change the burst. Press **V** again to hide the particles while
+keeping the hand skeletons visible. The score or piano roll remains visible beside the camera. The effect
 uses Qt's OpenGL widget and painter; it is an initial perspective particle
 prototype rather than a full 3D scene.
 

@@ -12,8 +12,6 @@ import time
 
 from camera_performance import _audio_loop, _open_camera
 from hand_movement import (
-    FINGER_NAMES,
-    HAND_CONNECTIONS,
     ChordGesture,
     FingerStateFilter,
     LeftHandControlExtractor,
@@ -34,7 +32,7 @@ from hand_movement import (
     HandMelodyHeight,
     SharedDownstrokeConductor,
 )
-from live_score import LiveScoreDisplay
+from live_score import LiveScoreDisplay, PITCH_CLASS_NAMES
 from magenta_router import (
     BACKENDS,
     DEFAULT_MAGENTA_PORT,
@@ -59,57 +57,13 @@ from soprano_performance import SopranoGestureController
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _draw_hand(cv2, frame, hand, color, label, finger_states=None):
-    height, width = frame.shape[:2]
-    pixels = [
-        (int(point.x * (width - 1)), int(point.y * (height - 1)))
-        for point in hand.landmarks
-    ]
-    for start, end in HAND_CONNECTIONS:
-        cv2.line(frame, pixels[start], pixels[end], color, 2, cv2.LINE_AA)
-    for point in pixels:
-        cv2.circle(frame, point, 3, (255, 255, 255), -1, cv2.LINE_AA)
-    if finger_states is not None:
-        for extended, tip_index in zip(finger_states, (4, 8, 12, 16, 20)):
-            tip_color = (0, 255, 0) if extended else (0, 0, 255)
-            cv2.circle(frame, pixels[tip_index], 7, tip_color, -1, cv2.LINE_AA)
-    x, y = palm_center(hand)
-    center = (int(x * (width - 1)), int(y * (height - 1)))
-    cv2.circle(frame, center, 7, color, -1, cv2.LINE_AA)
-    cv2.putText(
-        frame,
-        label,
-        (center[0] + 10, center[1] - 10),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        color,
-        2,
-        cv2.LINE_AA,
-    )
-
-
-def _put_lines(cv2, frame, lines):
-    for index, (message, color) in enumerate(lines):
-        cv2.putText(
-            frame,
-            message,
-            (12, 28 + index * 25),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.57,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-
-
-def _finger_text(fingers):
-    active = [name for name, extended in zip(FINGER_NAMES, fingers) if extended]
-    return "+".join(active) if active else "fist"
-
-
-def _meter(value, width=10):
-    filled = round(max(0.0, min(1.0, float(value))) * width)
-    return "[" + "#" * filled + "." * (width - filled) + "]"
+def _chord_name(chord: tuple[int, str]) -> str:
+    root, quality = chord
+    suffix = {
+        "maj": "", "min": "m", "dim": "dim",
+        "7": "7", "maj7": "maj7", "min7": "m7",
+    }.get(quality, quality)
+    return f"{PITCH_CLASS_NAMES[root % 12]}{suffix}"
 
 
 def parse_args(argv=None):
@@ -387,11 +341,12 @@ def main():
             voice, frame.planned_duration_ticks
         )
         chord = (int(frame.chord[0]), str(frame.chord[1]))
+        soprano_onset = "soprano" in frame.new_voices
         try:
             visual_events.put_nowait(
                 (
                     int(pitch), frame.velocity, voices, duration_ticks,
-                    session.mode, chord, time.perf_counter(),
+                    session.mode, chord, soprano_onset, time.perf_counter(),
                 )
             )
         except Full:
@@ -514,6 +469,8 @@ def main():
                     print(f"Performance mode: {action}")
                 elif action == "transport":
                     playing = session.toggle_playing()
+                    if piano_roll is not None:
+                        piano_roll.snapshot(playing=playing)
                     magenta.set_playing(playing)
                     if not playing:
                         player.stop_all()
@@ -722,160 +679,29 @@ def main():
                             f"quality={accepted.quality}"
                         )
 
-            if left_hand is not None:
-                left_label = {
-                    MODE_FULL: "LEFT: activity/tempo",
-                    MODE_SOPRANO: "LEFT: accompaniment",
-                    MODE_CONDUCTOR: (
-                        "LEFT: chord/height + fist beat" if roles_swapped
-                        else "LEFT: fist beat/intervals"
+            window.set_hand_overlays((
+                (
+                    tuple((point.x, point.y) for point in hand.landmarks),
+                    fingers or (),
+                    color,
+                )
+                for hand, fingers, color in (
+                    (
+                        left_hand,
+                        beat_fingers if session.mode == MODE_CONDUCTOR and roles_swapped
+                        else melody_fingers if session.mode == MODE_CONDUCTOR else None,
+                        "#ffc800",
                     ),
-                }[session.mode]
-                _draw_hand(
-                    cv2,
-                    frame,
-                    left_hand,
-                    (255, 200, 0),
-                    left_label,
-                    beat_fingers if session.mode == MODE_CONDUCTOR and roles_swapped
-                    else melody_fingers if session.mode == MODE_CONDUCTOR else None,
+                    (
+                        right_hand,
+                        melody_fingers if session.mode == MODE_CONDUCTOR and roles_swapped
+                        else beat_fingers if session.mode == MODE_CONDUCTOR
+                        else stable_fingers,
+                        "#00e070",
+                    ),
                 )
-            if right_hand is not None:
-                _draw_hand(
-                    cv2,
-                    frame,
-                    right_hand,
-                    (0, 255, 0),
-                    {
-                        MODE_FULL: "RIGHT: chord/register",
-                        MODE_SOPRANO: "RIGHT: soprano",
-                        MODE_CONDUCTOR: (
-                            "RIGHT: fist beat/intervals" if roles_swapped
-                            else "RIGHT: chord/height + fist beat"
-                        ),
-                    }[session.mode],
-                    melody_fingers if session.mode == MODE_CONDUCTOR and roles_swapped
-                    else beat_fingers if session.mode == MODE_CONDUCTOR
-                    else stable_fingers,
-                )
-
-            if session.mode == MODE_CONDUCTOR:
-                finger_status = (
-                    f"Chord={_finger_text(beat_fingers)} "
-                    f"melody={_finger_text(melody_fingers)}"
-                )
-            else:
-                finger_status = (
-                    f"Fingers raw={_finger_text(raw_fingers)} "
-                    f"stable={_finger_text(stable_fingers)}"
-                )
-            if session.mode == MODE_FULL:
-                target = engine.chord_control_target()
-                if candidate_gesture is None:
-                    right_status = "Right: pattern not mapped; hold the intended gesture"
-                else:
-                    right_status = (
-                        f"Right candidate: degree {candidate_gesture.degree} "
-                        f"{candidate_gesture.quality} tilt={candidate_gesture.tilt_degrees:+.0f}deg"
-                    )
-                selected_status = (
-                    "Selected chord: learned progression"
-                    if target is None
-                    else f"Selected chord: degree {target.degree} {target.quality}"
-                )
-                left_status = (
-                    f"Left activity {_meter(latest_left.melodic_activity)} "
-                    f"tempo={latest_left.tempo_bpm:.0f} BPM"
-                )
-                register_status = (
-                    f"Right register {_meter((right_register + 1.0) / 2.0)} "
-                    f"{right_register:+.2f}"
-                )
-                detail_status = (
-                    f"Left articulation={latest_left.articulation:.2f} "
-                    f"x-speed={latest_left.horizontal_speed:.3f}"
-                )
-            elif session.mode == MODE_SOPRANO:
-                soprano_gesture, soprano_pitch = soprano.status()
-                _program, timbre_name = soprano.timbre()
-                left_register = height_to_register(
-                    latest_left.palm_y, args.height_top, args.height_bottom
-                )
-                right_status = (
-                    f"Soprano: {soprano_gesture} | MIDI pitch "
-                    f"{soprano_pitch if soprano_pitch is not None else 'REST'}"
-                )
-                selected_status = "Harmony: learned Markov progression (no chord gestures)"
-                left_status = (
-                    f"Left accompaniment register {_meter((left_register + 1.0) / 2.0)} "
-                    f"tempo={latest_left.tempo_bpm:.0f} BPM"
-                )
-                register_status = (
-                    f"Timbre={timbre_name} | shake=trill | index tap=mordent"
-                )
-                detail_status = (
-                    f"Left articulation={latest_left.articulation:.2f} "
-                    f"x-speed={latest_left.horizontal_speed:.3f}"
-                )
-            else:
-                soprano_gesture, soprano_pitch = soprano.status()
-                right_acceleration = (
-                    0.0 if conductor_motion is None else conductor_motion.acceleration
-                )
-                beat_hands = (
-                    "none"
-                    if last_conductor_beat is None
-                    else "both"
-                )
-                left_status = (
-                    f"Conducted beats={conductor_beat_count} "
-                    f"tempo={engine.tempo_bpm:.0f} BPM last={beat_hands}"
-                )
-                right_status = (
-                    f"Chord-hand acceleration={right_acceleration:.2f} "
-                    f"threshold={args.conductor_acceleration:.2f}"
-                )
-                selected_status = (
-                    f"Conducted chord: degree {conductor_degree} diatonic"
-                    if conductor_degree is not None
-                    else "Conducted chord: learned progression until a gesture is selected"
-                )
-                register_status = (
-                    f"Melody: {soprano_gesture} | "
-                    f"MIDI pitch "
-                    f"{soprano_pitch if soprano_pitch is not None else 'waiting for first beat'}"
-                )
-                detail_status = (
-                    f"Both down + {'right' if roles_swapped else 'left'} fist=beat | "
-                    f"{'left' if roles_swapped else 'right'} height=melody | "
-                    f"separation={distance_control:.2f}"
-                )
-            mode_name = {
-                MODE_FULL: "FULL SATB",
-                MODE_SOPRANO: "SOPRANO PERFORMANCE",
-                MODE_CONDUCTOR: "CONDUCTOR",
-            }[session.mode]
-            lines = [
-                (
-                    f"MODE: {mode_name} "
-                    f"| {'PLAYING' if session.is_playing else 'PAUSED'}",
-                    (255, 255, 255),
-                ),
-                (
-                    left_status,
-                    (255, 200, 0),
-                ),
-                (
-                    detail_status,
-                    (255, 200, 0),
-                ),
-                (right_status, (0, 255, 0)),
-                (finger_status, (0, 255, 0)),
-                (register_status, (0, 255, 0)),
-                (selected_status, (255, 255, 255)),
-                (f"Key={engine.key} mode={engine.mode} | Q/Esc: quit", (255, 255, 255)),
-            ]
-            _put_lines(cv2, frame, lines)
+                if hand is not None
+            ))
             melody_hand = (
                 left_hand if session.mode == MODE_CONDUCTOR and roles_swapped
                 else right_hand
@@ -883,25 +709,33 @@ def main():
             window.set_visual_hand_positions(
                 (palm_center(hand) for hand in (left_hand, right_hand) if hand is not None),
                 paint_position=palm_center(melody_hand) if melody_hand is not None else None,
+                distance_level=(
+                    distance_control
+                    if session.mode == MODE_CONDUCTOR
+                    and left_hand is not None and right_hand is not None
+                    else None
+                ),
             )
             while True:
                 try:
                     (
                         pitch, velocity, voices, duration_ticks,
-                        source_mode, chord, event_time,
+                        source_mode, chord, soprano_onset, event_time,
                     ) = visual_events.get_nowait()
                 except Empty:
                     break
                 window.on_music_event(
                     pitch=pitch, velocity=velocity, voices=voices,
                     duration_ticks=duration_ticks, mode=source_mode,
-                    chord=chord, event_time=event_time,
+                    chord=chord, soprano_onset=soprano_onset,
+                    event_time=event_time,
                 )
+                window.set_chord_label(f"Chord: {_chord_name(chord)}")
             window.set_camera_frame(frame)
             window.set_state(
                 mode=session.mode,
                 playing=session.is_playing,
-                summary=f"{right_status} | {left_status} | {selected_status}",
+                summary="",
             )
             window.set_magenta_state(
                 enabled=magenta.enabled,
@@ -911,7 +745,9 @@ def main():
             if live_score is not None:
                 window.update_score(live_score.snapshot())
             if piano_roll is not None:
-                window.update_piano_roll(piano_roll.snapshot())
+                window.update_piano_roll(piano_roll.snapshot(
+                    playing=session.is_playing and session.mode == MODE_CONDUCTOR
+                ))
             qt_app.processEvents()
     finally:
         stop_event.set()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,7 +53,7 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
         )
         self._marks: list[PaintMark] = []
         self._last_point = None
-        self._rng = random.Random(0xA27)
+        self._current_chord = (0, "maj")
         self._paint_background()
 
     @property
@@ -65,9 +64,13 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
         """Start a new painting without changing previously saved PNG files."""
         self._marks.clear()
         self._last_point = None
-        self._rng.seed(0xA27)
         self._paint_background()
         self.update()
+
+    def set_chord(self, chord: tuple[int, str] | None) -> None:
+        """Change the pigment used by subsequent soprano notes without drawing."""
+        if chord is not None:
+            self._current_chord = (int(chord[0]) % 12, str(chord[1]).lower())
 
     def _paint_background(self) -> None:
         painter = QtGui.QPainter(self._canvas)
@@ -95,14 +98,10 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
             return
         x = max(0.04, min(0.96, x))
         y = max(0.04, min(0.96, y))
-        chord_identity = (
-            (int(chord[0]) % 12, str(chord[1]).lower())
-            if chord is not None
-            else (int(pitch) % 12, "maj")
-        )
+        self.set_chord(chord)
         mark = PaintMark(
             pitch=int(pitch),
-            chord=chord_identity,
+            chord=self._current_chord,
             velocity=max(0, min(127, int(velocity))),
             duration_ticks=max(1, int(duration_ticks)),
             voices=max(1, int(voices)),
@@ -118,8 +117,8 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         center = QtCore.QPointF(mark.x * CANVAS_WIDTH, mark.y * CANVAS_HEIGHT)
         color = color_for_chord(mark.chord)
-        width = 7.0 + mark.velocity * 0.14
-        length = 22.0 + min(64, mark.duration_ticks) * 2.15
+        width = 8.0 + mark.velocity * 0.12 + min(4, mark.voices) * 1.2
+        length = 52.0 + min(64, mark.duration_ticks) * 2.15
 
         previous = self._last_point
         if previous is not None:
@@ -146,58 +145,67 @@ class MusicPaintingView(QtWidgets.QOpenGLWidget):
                 center.x() + math.cos(angle) * length * 0.55,
                 center.y() + math.sin(angle) * length * 0.55,
             )
-            control = QtCore.QPointF(
-                center.x() - math.sin(angle) * length * 0.32,
-                center.y() + math.cos(angle) * length * 0.32,
+            control = center
+
+        def curve_point(t: float) -> QtCore.QPointF:
+            inverse = 1.0 - t
+            return QtCore.QPointF(
+                inverse * inverse * start.x() + 2 * inverse * t * control.x()
+                + t * t * end.x(),
+                inverse * inverse * start.y() + 2 * inverse * t * control.y()
+                + t * t * end.y(),
             )
 
-        path = QtGui.QPainterPath(start)
-        path.quadTo(control, end)
-        soft = QtGui.QColor(color)
-        soft.setAlpha(40)
-        painter.setPen(
-            QtGui.QPen(soft, width * 2.6, QtCore.Qt.SolidLine,
-                       QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
-        )
-        painter.drawPath(path)
-        ink = QtGui.QColor(color)
-        ink.setAlpha(90 + mark.velocity // 3)
-        painter.setPen(
-            QtGui.QPen(ink, width, QtCore.Qt.SolidLine,
-                       QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
-        )
-        painter.drawPath(path)
+        left_edge = []
+        right_edge = []
+        for index in range(25):
+            t = index / 24.0
+            point = curve_point(t)
+            dx = 2 * (1 - t) * (control.x() - start.x()) + 2 * t * (end.x() - control.x())
+            dy = 2 * (1 - t) * (control.y() - start.y()) + 2 * t * (end.y() - control.y())
+            magnitude = max(1e-6, math.hypot(dx, dy))
+            half_width = width * (0.15 + 0.85 * math.sin(math.pi * t) ** 0.7) / 2
+            normal_x, normal_y = -dy / magnitude, dx / magnitude
+            left_edge.append(QtCore.QPointF(
+                point.x() + normal_x * half_width,
+                point.y() + normal_y * half_width,
+            ))
+            right_edge.append(QtCore.QPointF(
+                point.x() - normal_x * half_width,
+                point.y() - normal_y * half_width,
+            ))
 
-        painter.setPen(QtCore.Qt.NoPen)
-        wash = QtGui.QColor(color)
-        wash.setAlpha(38)
-        painter.setBrush(wash)
-        for index in range(min(4, mark.voices)):
-            angle = 2 * math.pi * index / max(1, min(4, mark.voices))
-            offset = 9 + index * 7
-            painter.drawEllipse(
-                QtCore.QPointF(
-                    center.x() + math.cos(angle) * offset,
-                    center.y() + math.sin(angle) * offset,
-                ),
-                length * 0.22,
-                width * 1.5,
-            )
-        speckle = QtGui.QColor(color)
-        speckle.setAlpha(125)
-        painter.setBrush(speckle)
-        for _ in range(min(9, 3 + mark.voices)):
-            angle = self._rng.uniform(0, 2 * math.pi)
-            radius = self._rng.uniform(8, length * 0.55)
-            size = self._rng.uniform(2.5, 6.0)
-            painter.drawEllipse(
-                QtCore.QPointF(
-                    center.x() + math.cos(angle) * radius,
-                    center.y() + math.sin(angle) * radius,
-                ),
-                size,
-                size,
-            )
+        stroke = QtGui.QPainterPath(left_edge[0])
+        for point in left_edge[1:] + list(reversed(right_edge)):
+            stroke.lineTo(point)
+        stroke.closeSubpath()
+        pigment = QtGui.QColor(color)
+        pigment.setAlpha(240)
+        outline = color.darker(155)
+        outline.setAlpha(225)
+        painter.setBrush(pigment)
+        painter.setPen(QtGui.QPen(outline, 1.8, QtCore.Qt.SolidLine,
+                                 QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin))
+        painter.drawPath(stroke)
+
+        # Several simultaneous voices add fine companion strokes, not dots.
+        painter.setBrush(QtCore.Qt.NoBrush)
+        accent = QtGui.QColor(color)
+        accent.setAlpha(220)
+        painter.setPen(QtGui.QPen(accent, 2.6, QtCore.Qt.SolidLine,
+                                 QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin))
+        for index in range(1, min(4, mark.voices)):
+            side = -1 if index % 2 else 1
+            offset = side * (width * 0.75 + (index // 2) * 5)
+            first = curve_point(0.22)
+            last = curve_point(0.76)
+            dx = last.x() - first.x()
+            dy = last.y() - first.y()
+            magnitude = max(1e-6, math.hypot(dx, dy))
+            shift = QtCore.QPointF(-dy / magnitude * offset, dx / magnitude * offset)
+            companion = QtGui.QPainterPath(first + shift)
+            companion.quadTo(curve_point(0.49) + shift, last + shift)
+            painter.drawPath(companion)
         painter.end()
         self._last_point = center
 
